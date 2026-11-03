@@ -1,0 +1,9 @@
+{
+  "name": "modular-map-builder",
+  "version": "0.1.0",
+  "description": "Procedurally generated, 3D-printable modular terrain tiles with rivers that actually flow between them",
+  "type": "module",
+  "bin": { "mmb": "./bin/mmb.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "license": "MIT"
+}

@@ -1,0 +1,4 @@
+node_modules/
+tiles/
+*.stl
+!docs/*.stl
