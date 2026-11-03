@@ -265,6 +265,70 @@ Erosion follows sliding, not ice thickness, because cold-based ice frozen to
 its bed erodes nothing — which is why plateaux survive between glaciated
 troughs.
 
+### Cut, retreat, cut again
+
+One glaciation at one climate carves one trough and nothing else. The
+landforms that make glaciated country *recognisable* are the work of repeated
+advances with the snowline moving between them, so the ELA swings as a cosine:
+warm at the start, coldest half way through each cycle, warm at the end —
+which leaves the map deglaciated, the state you would print.
+
+| | |
+|---|---|
+| **cirques** | bite in at the snowline. A snowline that *moves* leaves a staircase of them at different heights instead of one |
+| **hanging valleys** | a tributary carries less ice than the trunk and cuts less deep. Every advance widens the gap |
+| **waterfalls** | are what a hanging valley is, once the ice has gone |
+| **tarns** | sit in the overdeepened cirque floors afterwards |
+
+```json
+"glacier": { "elaSwingM": 450, "glacialCycles": 3, "cycles": 60 }
+```
+
+**Cycling needs more total cycles than a steady climate, not the same.** Each
+advance only erodes while it is cold, so three cycles over 36 geomorphic steps
+does *less* work than one steady climate over 36 and comes out softer. Sixty
+gives each advance about twenty steps, which is where the troughs start
+showing rounded heads instead of a uniform comb.
+
+### Two things that had to be put in by hand
+
+**The glacial buzzsaw.** Erosion scaling with sliding alone *cannot* make a
+cirque, and that is a limitation of the shallow-ice approximation rather than
+a bug. Sliding goes as the square of basal shear, which goes as ice thickness,
+so the **head** of a glacier — where the ice is thin — erodes least. Real
+cirques are excavated at exactly that spot, by rotational flow in a closed
+cell that the SIA has no way to represent. So the observation goes in
+directly: erosion is multiplied by a bump centred on the ELA, which is why
+cirque floors across a range cluster at one elevation. `buzzsawGain: 0` turns
+it off and leaves sliding alone.
+
+**Quarrying.** Abrasion is ice dragging grit over rock; it scales with speed
+alone, polishes evenly, and never steepens anything. Quarrying is blocks being
+levered out, and it concentrates where the bed is already steep — the lee of a
+bedrock step, the back wall of a hollow. That is the term that makes a
+headwall *retreat* into a cirque instead of being smoothed off.
+
+It is keyed to a **smoothed** bed, which is not a detail. Read off the raw
+grid, quarrying responds to single-cell noise, and that is a positive feedback
+— a cell slightly below its neighbours has a steeper local gradient, so it
+quarries harder, so it drops further. The first run turned a valley into 175
+pits and reported them as basins.
+
+### Creep is what sorts cirques from pits
+
+Diffusion damps a feature at a rate going as the **square** of its wavenumber,
+so a 300 m pit is smoothed roughly fifty times faster than a 2 km cirque.
+Without it the bed ends up covered in single-cell hollows that nothing
+counting closed depressions can tell from corries. With it, the small ones
+fill and the big ones stay — which is what talus and till do on real ground.
+
+The critical-angle rule cannot do this job: on a 133 m grid, 55° allows a
+190 m step between neighbours, so a 40 m pit is nowhere near steep enough to
+trigger it.
+
+`lib/basins.js` finds closed hollows by priority-flood, which is both the
+proof the ice worked and the input lake carving will need.
+
 **Four numerical mistakes, all of which shipped wrong before being caught**, are
 documented in `lib/glacier.js` because each is the obvious thing to do:
 
@@ -316,6 +380,55 @@ the glacier has undercut it. `lib/hillslope.js` is that: nothing stands steeper
 than its critical angle, and what comes off piles up where it lands.
 
 ---
+
+## Woods
+
+Trees are **placed and stamped**, not noised. A noise field tuned to look
+bumpy gives bumpy ground; what reads as forest from above is a field of
+separate crowns. It also means size is a number you set rather than a
+frequency you fiddle with — the same stamp at 4 mm is a hedge, at 9 mm scrub,
+at 16 mm a mature canopy.
+
+```json
+"canopy": [
+  { "kind": "conifer",   "crownMM": 7,  "heightMM": 9, "spacingMM": 12,
+    "minZMM": 34, "maxZMM": 96, "maxSlopeDeg": 36 },
+  { "kind": "deciduous", "crownMM": 12, "heightMM": 7, "spacingMM": 16,
+    "maxZMM": 40, "maxSlopeDeg": 24 }
+]
+```
+
+**Conifer** is a cone with a slightly convex spire and a few branch whorls
+stepped into the flank, because a plain cone reads as a traffic bollard. Plus
+a small out-of-round plan and a lean, so no two are identical.
+
+**Deciduous is cauliflower, not a dome.** This took three attempts. A dome
+prints as a blister and reads as a boulder. Four lobes at half the crown
+radius measured as 15% variation around a ring and *still* read as a smooth
+ball — because at that scale the lobes **are** the dome. Broadleaf canopy from
+above is many bumps at a quarter the width of the crown, so it is nine lobes
+at under a third of the radius, over a small core that only exists to stop the
+crown having a hole in the middle.
+
+Crowns combine with **max**, never by adding. Adding makes a dense wood swell
+into one mound and lose every crown edge; max keeps the gaps, and the gaps are
+what the eye reads as trees.
+
+| rule | why |
+|---|---|
+| `maxZMM` | a treeline, in **world** mm. The cheapest thing in the file that makes a mountain read right |
+| `maxSlopeDeg` | nothing grows on a cliff |
+| water | nothing is planted in the river, or within `bankMM` of it |
+| the rim | a trunk that cannot stand clear of the seam by its own radius simply does not stand. **No tree ever crosses a seam** |
+
+A treeline has to be read in world height. Tiles stand on different numbers of
+plates, so local heights say nothing about how high a piece of ground actually
+is — read locally, the treeline planted woods over every summit on the map,
+because a tile six plates up looks exactly like a valley tile from the inside.
+
+Crowns too coarse for the mesh are reported rather than silently printed as
+lumps: below about five cells across, you want a finer `meshMM` or a bigger
+crown.
 
 ## The edge contract
 
@@ -404,7 +517,9 @@ lib/field.js       the height grid, and the adapter to relief's terrain duck typ
 lib/noise.js       value noise, a pure function of WORLD position so seams agree
 lib/terrain.js     uplift: spine, roughness, flats, volcanoes, stratigraphy
 lib/glacier.js     shallow-ice flow with sliding, abrading its own bed
-lib/hillslope.js   nothing stands steeper than its critical angle
+lib/hillslope.js   critical-angle failure, and creep
+lib/basins.js      closed hollows, by priority-flood — the proof the ice worked
+lib/canopy.js      woods: conifer spires and broadleaf cauliflower
 lib/river.js       routing between ports, and carving to the 12 -> 2 profile
 lib/tile.js        the ONE place metres become millimetres
 lib/mesh.js        height field -> closed solid, with a watertightness check
@@ -443,7 +558,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-57 checks. The ones that earn their keep:
+78 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -460,6 +575,17 @@ npm test
   directly
 - a waterfall reads as a waterfall **from either side of the seam**
 - a steeper tile carries the same water in a narrower channel
+- an oscillating snowline makes the ice **advance and retreat**
+- the buzzsaw concentrates cutting near the snowline
+- creep is what sorts cirques from grid noise
+- glacial cutting is counted apart from creep
+- a broadleaf crown is markedly lumpier round a ring than a conifer
+- **a tree built the way `scatterCanopy` builds one** is still lumpy — the
+  regression for a bug where `placeTrees` dropped a shape field, every outer
+  lobe came out `NaN`, and deciduous trees rendered as bare domes while the
+  unit test passed on a hand-built object
+- no tree crosses a seam; the rim is byte-identical after planting
+- a treeline is a world elevation, not a tile-local one
 
 ## Status
 
@@ -467,12 +593,16 @@ Working and tested end to end: contract, plate levels, seam proofs, river
 routing and carving, tile cutting, watertight meshing, STL, preview.
 
 Not built yet: lakes and tarns as scooped basins — which is what a **dam**
-seam needs, since nothing carves the reservoir that ponds behind one yet;
+seam needs, since nothing carves the reservoir that ponds behind one yet, and
+what the cirque floors the ice now leaves are waiting for;
 fountain outlets and buffer chambers; the dog-bone key geometry; the drip
 tray; mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
 exists, nothing calls it); and a browser UI.
 
-Under-tuned: glacial U-widening, as described above.
+Next, in the order asked for: **rivers**, then **fountains**.
+
+Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
+`erosionK` are the levers.
 
 ## Licence
 

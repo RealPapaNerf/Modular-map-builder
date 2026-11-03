@@ -126,3 +126,91 @@ test('valleyForm separates a U from a V', () => {
   const u = valleyForm(U, 32).ratio;
   assert.ok(u > v, `a U (${u.toFixed(3)}) must score above a V (${v.toFixed(3)})`);
 });
+
+// ---------------------------------------------------------------------------
+// Cut, retreat, cut again
+
+test('a steady climate neither advances nor retreats', () => {
+  const f = alpineValley(48);
+  const r = glaciate(f, { elaM: 2200, cycles: 6, elaSwingM: 0 });
+  assert.equal(r.stats.elaColdestM, r.stats.elaWarmestM);
+  assert.ok(Math.abs(r.stats.maxIcedFraction - r.stats.minIcedFraction) < 0.25,
+    'with one climate the ice extent should settle, not swing');
+});
+
+test('an oscillating snowline makes the ice advance and retreat', () => {
+  const f = alpineValley(48);
+  // The snowline has to be high enough relative to the terrain for retreat
+  // to be visible at all: with the mean low down, the height/mass-balance
+  // feedback keeps 80% of the map under ice through the whole swing.
+  const r = glaciate(f, { elaM: 3000, cycles: 24, elaSwingM: 700, glacialCycles: 2 });
+  assert.ok(r.stats.elaWarmestM - r.stats.elaColdestM > 900, 'the snowline should actually move');
+  assert.ok(r.stats.maxIcedFraction - r.stats.minIcedFraction > 0.3,
+    `ice should come and go, got ${(r.stats.minIcedFraction * 100).toFixed(0)}%-${(r.stats.maxIcedFraction * 100).toFixed(0)}%`);
+  assert.equal(r.history.length, 24, 'one climate entry per geomorphic cycle');
+});
+
+test('a schedule given outright is used as given', () => {
+  const f = alpineValley(48);
+  const sched = [2600, 2100, 2600, 2100];
+  const r = glaciate(f, { cycles: 4, elaSchedule: sched });
+  assert.equal(r.stats.elaColdestM, 2100);
+  assert.equal(r.stats.elaWarmestM, 2600);
+  assert.deepEqual(r.history.map((h) => h.elaM), sched);
+});
+
+test('the buzzsaw concentrates cutting near the snowline', () => {
+  // On a uniform ramp under ice, erosion with the buzzsaw off should be set
+  // by sliding alone; with it on, the band around the ELA takes noticeably
+  // more. This is the one part of the erosion law put in by observation
+  // rather than derived, so it is worth pinning down that it does what it
+  // claims.
+  const f = alpineValley(64);
+  const ela = 2200;
+  const plain = glaciate(f, { elaM: ela, cycles: 10, elaSwingM: 0, buzzsawGain: 0 });
+  const sawn = glaciate(f, { elaM: ela, cycles: 10, elaSwingM: 0, buzzsawGain: 3 });
+  const n = f.nx;
+  // Compare cutting inside the ELA band against cutting well below it.
+  let inBand = 0;
+  let below = 0;
+  for (let k = 0; k < n * n; k++) {
+    const z0 = f.values[k];
+    const dPlain = z0 - plain.bed.values[k];
+    const dSawn = z0 - sawn.bed.values[k];
+    if (Math.abs(z0 - ela) < 200) inBand += dSawn - dPlain;
+    else if (z0 < ela - 700) below += dSawn - dPlain;
+  }
+  assert.ok(inBand > 0, 'the band around the snowline should be cut harder');
+  assert.ok(inBand > below * 2,
+    `cutting should concentrate at the snowline: ${inBand.toFixed(0)} in band against ${below.toFixed(0)} well below`);
+});
+
+test('glacial cutting is counted apart from creep', () => {
+  // Hillslope creep lowers a ridge whether or not there is ice, so lumping
+  // the two together reported incision on a run with no glacier at all.
+  const f = alpineValley(48);
+  const r = glaciate(f, { cycles: 3, maxAccumM: 0, accumGradient: 0, ablateGradient: 0, maxAblateM: 0, hillslopeD: 0.4 });
+  assert.equal(r.stats.maxIceM, 0);
+  assert.equal(r.stats.maxIncisionM, 0, 'no ice, no glacial cutting');
+  assert.ok(r.stats.maxBedDropM > 0, 'but the ridge still creeps');
+});
+
+test('creep is what sorts cirques from grid noise', async () => {
+  // Without hillslope diffusion, quarrying leaves the bed covered in
+  // single-cell pits, and anything that merely counts closed hollows cannot
+  // tell them from cirques. Diffusion damps a feature at a rate going as the
+  // square of its wavenumber, so it takes the pits out and leaves the broad
+  // basins -- which is the whole reason it is in the loop.
+  const { depressionStats } = await import('../lib/basins.js');
+  const run = (D) => {
+    const r = glaciate(alpineValley(64, 200), { elaM: 2300, cycles: 20, hillslopeD: D });
+    const st = depressionStats(r.bed, { minDepthM: 10 });
+    return { count: st.count, tiny: st.basins.filter((b) => b.cells <= 2).length };
+  };
+  const off = run(0);
+  const on = run(0.3);
+  assert.ok(off.count > 10, `expected pitting with creep off, got ${off.count} hollows`);
+  assert.ok(off.tiny / off.count > 0.8, 'and they should almost all be a cell or two');
+  assert.ok(on.count < off.count / 3, `creep should clear most of them: ${on.count} against ${off.count}`);
+  assert.ok(on.tiny < off.tiny / 3, `and the single-cell pits especially: ${on.tiny} against ${off.tiny}`);
+});

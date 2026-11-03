@@ -43,6 +43,12 @@ const EXAMPLE = {
     { name: 'main', sourceEdge: 'N', path: [[1, 2], [1, 1], [1, 0]], sinkEdge: 'S', size: 'creek' },
     { name: 'trib', sourceEdge: 'E', path: [[2, 1], [1, 1]], size: 'creek' },
   ],
+  // Woods. maxZMM is a treeline and it is the cheapest thing in the file
+  // that makes a mountain read right; maxSlopeDeg keeps them off the cliffs.
+  canopy: [
+    { kind: 'conifer', crownMM: 7, heightMM: 9, spacingMM: 12, minZMM: 34, maxZMM: 96, maxSlopeDeg: 36 },
+    { kind: 'deciduous', crownMM: 12, heightMM: 7, spacingMM: 16, maxZMM: 40, maxSlopeDeg: 24 },
+  ],
   contract: { tileMM: 200, plateMM: 10, outletZMM: 2, edgeLandMM: 18 },
 };
 
@@ -91,7 +97,8 @@ if (cmd === 'example') {
     console.log(
       `  ${t.label.padEnd(4)} ${String(t.stack.plates).padStart(2)} plates ` +
       `(${String(t.stack.standMM).padStart(3)} mm) fall ${String(t.fallMM).padStart(2)}  ` +
-      `${ports.padEnd(20)} prints ${t.bbox.size[2].toFixed(1).padStart(5)} mm, ` +
+      `${ports.padEnd(20)} ${String(t.trees || 0).padStart(4)} trees  ` +
+      `prints ${t.bbox.size[2].toFixed(1).padStart(5)} mm, ` +
       `edge err ${t.edges.worst.toFixed(4)}, ` +
       `${t.mesh.watertight ? 'closed' : 'LEAKS'}`,
     );
