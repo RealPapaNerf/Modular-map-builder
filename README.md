@@ -24,51 +24,131 @@ the plate levels.*
 
 ## The flow rule, and what it actually fixes
 
-The brief was: **rivers enter a tile 12 mm up and leave 2 mm from the bottom.**
-Work out what that forces.
-
-Water leaves tile A at 2 mm above A's base and has to arrive at B's inlet,
-12 mm above B's base. For the surface to be continuous:
+Water leaves tile A at `outletZ` above A's base and arrives at B's inlet,
+`inletZ` above B's base. For the surface to be continuous:
 
 ```
-baseZ(A) + 2 = baseZ(B) + 12    ⟹    baseZ(B) = baseZ(A) − 10
+baseZ(A) + outletZ = baseZ(B) + inletZ
+  ⟹  baseZ(A) − baseZ(B) = inletZ − outletZ = the tile's FALL
 ```
 
-**The downstream tile sits exactly one 10 mm plate lower.** The plate stack is
-not scenery under the map — it *is* the river's gradient, quantised. Every
-seam the river crosses spends one plate.
+**The downstream tile sits lower by exactly the fall**, and since tiles stand
+on 10 mm plates the fall has to be a whole number of them. The plate stack is
+not scenery under the map — it *is* the river's gradient, quantised.
 
-Three consequences worth knowing before you draw a map:
+### Falls are per tile, 10 to 50 mm
 
-**1. The real contract is `inletZ − outletZ = plateMM`, not "12 and 2".** The
-absolute heights are free. That matters, because at `outletZ = 2` there is only
-2 mm of plastic under the channel where it leaves the tile — about ten layers
-at 0.2 mm, thin for something that holds water and gets handled by a child.
-`outletZ 4 / inletZ 14` has the identical 10 mm fall, the identical plate
-quantum, and twice the floor. The default is the 12/2 you asked for and
-`check` says it's thin rather than deciding for you.
+| fall | gradient | what it is |
+|---|---|---|
+| 10 mm | 5% | a river |
+| 20 mm | 10% | a fast river |
+| 30 mm | 15% | rapids |
+| 40 mm | 20% | a torrent |
+| 50 mm | 25% | a cascade |
 
-**2. Plate levels are a graph problem, and it can be unsolvable.** Every path
-into a tile has to give the same level. Two rivers that meet after running
-different numbers of tiles cannot both arrive at 12 mm, and the map is
-unbuildable as drawn:
+A tile declares its own, and stands that many plates below its upstream
+neighbour. `inletZ = outletZ + fallMM`, so the steepest puts an inlet 52 mm up.
+
+Two consequences worth knowing before you draw a map:
+
+**The real invariant is `inletZ − outletZ = fallMM`, not "12 and 2".** The
+absolute heights are free, and at `outletZ = 2` there is only 2 mm of plastic
+under the channel where it leaves the tile — about ten layers at 0.2 mm, thin
+for something that holds water and gets handled by a child. `outletZ 4` keeps
+every fall identical and doubles the floor. The default is the 12/2 you asked
+for and `check` says it is thin rather than deciding for you.
+
+**Plate levels are a difference-constraint system.** Each arc says
+`level(upstream) − level(downstream) = plates`, and that is *all* it says. The
+first solver treated it as a longest path with every source pinned at level 0,
+and that produced a **false error on the most ordinary thing a river does**:
+two tributaries of different lengths meeting. They do not conflict — their
+sources simply end up at different heights, which is what tributaries look
+like. A real conflict needs a **loop**: a channel that splits and rejoins, so
+going round it has to sum to zero and does not.
 
 ```
-error: Tile 2,0 is reached by two rivers that have run different numbers of
-tiles, so it would have to sit -1 and -2 plates up at once. Lengthen the
-shorter branch by a tile, or move the confluence a tile downstream.
+error: Tile 1,1 is reached by two rivers that have fallen different amounts,
+so it would have to sit -4 and -2 plates up at once. The river splits and
+rejoins somewhere, and the two ways round do not drop the same. Change a fall
+on one of them, or add a waterfall to the shallower.
 ```
 
-Cycles, unmatched ports and mismatched river widths are caught the same way.
-This is the thing that will bite when you draw a branching network by hand, and
-it is better to be told which two branches than to find out in PLA.
+### Rivers get wider as they gather
 
-**3. 10 mm over 200 mm is a 5% gradient** — steep for a real river, about right
-for a printed channel, where layer lines and surface tension will stall a
-shallower one. A map 3 tiles deep spends 2–3 plates, which is well inside the
-"a kid can't reach past 400 mm anyway" limit.
+Width goes as the **square root of discharge** — hydraulic geometry, good
+across four orders of magnitude of real river — and discharge adds at a
+confluence. So widths add in quadrature:
 
----
+```
+w_out = ceil_to_ladder( √( Σ w_in² ) )
+```
+
+Rounded **up**, because a channel narrower than its flow is the failure that
+floods the tile. Two 10 mm creeks give 14.1 mm → 20. Three give 17.3 mm → 20.
+Both are exactly what the brief said, which is a good sign the brief was
+hydraulics all along rather than a guess.
+
+| ladder | | |
+|---|---|---|
+| creek | 10 mm | channel |
+| stream | 20 mm | channel |
+| river | 30 mm | channel |
+| bay | 40 mm | **opening** |
+| fjord | 50 mm | **opening** |
+
+The two widest are mouths, not rivers — a bay, a fjord or the neck of a lake —
+so they are cut as openings with a short steep lip instead of long banks.
+
+**Steeper tiles need less width.** Manning gives `Q ∝ w · d^(5/3) · S^(1/2)`,
+so for a fixed flow the width needed falls as the square root of the gradient:
+a 30 mm river on a 10 mm fall only needs 20 mm on a 30 mm fall. A declared
+width is never silently changed — the width is visible on the printed tile —
+but one that is too narrow for its inflow is reported:
+
+```
+warning: B2 S is declared 10 mm but takes in 20 mm of river over a 30 mm
+fall, which wants 20 mm. It will flood.
+```
+
+### A step at a seam is a feature, not a fault
+
+In the first version both sides had to declare the same height or the map was
+refused. That throws away the most useful thing the system can do. A seam is
+now **classified**:
+
+| | |
+|---|---|
+| **plane** | both sides at one height, the ground runs straight across |
+| **cliff** | a step in the land, no water crossing it |
+| **waterfall** | a step the river falls down |
+| **dam** | a step the river would have to climb; it ponds behind instead |
+| **ledge** | the water runs level and the ground either side steps |
+
+A 50 mm edge against a 10 mm edge is a 40 mm cliff. Declare `waterfalls:
+{"1,1": 20}` and that tile sits 20 mm further below its upstream neighbour
+than its own fall accounts for, and the river free-falls the difference.
+
+The sign is read **from where the water comes from**, not from the order the
+tiles happen to be checked in. Keying it to iteration order reported every
+waterfall on a north-flowing river as a dam.
+
+**A waterfall at a seam is also the best answer to leaking** — water that is
+*airborne* across the seam cannot find the gap at all. See below.
+
+### Banks become levees where they have to
+
+With a 50 mm fall an inlet sits 52 mm above the tile's base, well above any
+land datum, so the ground beside it is not a bank at all and the water runs
+out sideways. The bank therefore climbs to whichever is higher — the
+surrounding land, or a freeboard above the water — and eases back down beyond.
+Away from a port the profile is exactly what it always was. relief does the
+same for a pool that has to hold its level: *"wherever its rim is lower than
+that a lip is built up."*
+
+The first attempt instead raised the whole corner lattice to clear the deepest
+port, which dragged every rim on the map above the terrain and brought the
+picture-frame moat straight back, inverted as a wall.
 
 ## Making the water stay in the river
 
@@ -266,37 +346,60 @@ between them.
 - A piece still mates with any piece declaring the same corners — which is what
   *"all pieces of a certain size should match"* means in practice.
 
-### The rim is a Coons patch
+### Interpolate the discrepancy, not the target
 
-Weighting each edge by how near it is and averaging put every tile **0.33 mm
-off its own contract** near the corners: on the south edge the west edge still
-had a say, and the average of two profiles is neither. A Coons patch reproduces
-all four edge curves exactly:
+Three ways this has been wrong, and the third is the subtle one:
+
+1. **Blend toward a flat datum near the rim.** Every tile came out a plateau
+   in a picture frame — the generator rose 40 mm above a rim pinned at 18 and
+   the clamp dug a moat round each piece.
+2. **Blend toward a Coons patch of the declared edges.** Exact at the rim, but
+   it still *overwrites* the terrain near the boundary with the rim surface.
+   When a corner is shared with a tile five plates higher, that corner sits
+   50 mm above where the generator put the ground — and the moat comes back,
+   inverted, as a wall. This is what the second hillshade showed.
+3. **Interpolate the discrepancy.** For each edge, take the residual between
+   what the contract declares and what the generator produced *along that
+   edge*. Build a Coons patch of those four residual curves and add it to the
+   whole tile.
 
 ```
-F = (1−u)W(y) + uE(y) + (1−v)S(x) + vN(x)
-    − [ (1−u)(1−v)·sw + u(1−v)·se + (1−u)v·nw + uv·ne ]
+correction = (1−u)R_W(y) + u·R_E(y) + (1−v)R_S(x) + v·R_N(x)
+             − [ (1−u)(1−v)·sw + u(1−v)·se + (1−u)v·nw + uv·ne ]
 ```
 
-and the blend to the generated interior is a smooth union, not `min()` over the
-four edge distances — `min` creases along the diagonals, and those creases were
-plainly visible across every corner in the second hillshade.
+At the rim the residual *is* the gap, so the boundary lands exactly on the
+contract. Inland the correction is a smooth low-order surface — a tilt, or a
+gentle dome — so the terrain keeps all of its own shape and simply leans to
+meet its neighbours. There is no blend distance to tune and nothing to
+flatten, because nothing is ever replaced.
+
+Getting the two north corner indices the wrong way round in that bilinear term
+put every tile **0.86 mm** off its own contract — exactly the gap between its
+two north corners. An exactness bug shows up as a small number, not an obvious
+one, which is why the test asserts `< 1e-6` and not "looks right".
 
 Current output: **worst edge error across every tile, 0.0000 mm.**
 
 ### The contract gets the last word
 
-The river carve runs **before** the rim clamp. In the other order, every tile
-with a river came out 4.1–4.7 mm off contract, because the carve re-cut a
-channel the clamp had already cut and took the banks down twice. Whoever owns
-the boundary has to own it last.
+The tile is conformed to its contract, *then* the river is carved into ground
+already at the right height, *then* conformed again so the rim is exact
+whatever the carve did near it. In the other order every river tile came out
+4.1–4.7 mm off contract, because the carve re-cut a channel the clamp had
+already cut and took the banks down twice. Whoever owns the boundary has to
+own it last.
+
+The carve both **cuts and fills**, for the same reason the edge profile does:
+with a 52 mm inlet the bed usually enters above the ground, and a carve that
+only ever removed material left the top of the river with no channel at all.
 
 ---
 
 ## Layout
 
 ```
-lib/contract.js    the edge contract: ports, corners, plate levels, seam proofs
+lib/contract.js    the edge contract: ports, falls, widths, corners, seam kinds
 lib/field.js       the height grid, and the adapter to relief's terrain duck type
 lib/noise.js       value noise, a pure function of WORLD position so seams agree
 lib/terrain.js     uplift: spine, roughness, flats, volcanoes, stratigraphy
@@ -340,7 +443,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-41 checks. The ones that earn their keep:
+57 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -350,17 +453,24 @@ npm test
 - basal shear is capped, so nothing surges permanently
 - the glacier overdeepens its bed
 - mass wasting conserves rock
-- branches of unequal length at a confluence are **reported, not papered over**
+- two tributaries of different lengths are **fine** — the regression for the
+  false error the first level solver raised
+- a channel that splits and rejoins **must drop the same both ways round**
+- confluences widen by quadrature — both cases from the brief, asserted
+  directly
+- a waterfall reads as a waterfall **from either side of the seam**
+- a steeper tile carries the same water in a narrower channel
 
 ## Status
 
 Working and tested end to end: contract, plate levels, seam proofs, river
 routing and carving, tile cutting, watertight meshing, STL, preview.
 
-Not built yet: lakes and tarns as scooped basins, fountain outlets and buffer
-chambers, the dog-bone key geometry, the drip tray, mesa stratigraphy wired
-into a fluvial incision pass (`makeStrata` exists; nothing calls it yet), and a
-browser UI.
+Not built yet: lakes and tarns as scooped basins — which is what a **dam**
+seam needs, since nothing carves the reservoir that ponds behind one yet;
+fountain outlets and buffer chambers; the dog-bone key geometry; the drip
+tray; mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
+exists, nothing calls it); and a browser UI.
 
 Under-tuned: glacial U-widening, as described above.
 

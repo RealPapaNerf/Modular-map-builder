@@ -47,10 +47,11 @@ test('the plate stack descends by exactly one plate per tile along the river', (
   assert.equal(L('1,0') - L('2,0'), 1);
 });
 
-test('the water crosses every seam at one height', () => {
+test('the water crosses every seam at one height when nothing declares a step', () => {
   const r = buildMap(SPEC);
   for (const s of r.seamChecks) {
-    assert.ok(s.ok, `${s.from} ${s.edge}: channel out by ${s.channel.toFixed(3)} mm`);
+    assert.ok(s.flush, `${s.from} ${s.edge} is a ${s.kind}: land ${s.landStepMM.toFixed(3)} mm, water ${s.waterStepMM}`);
+    assert.equal(s.kind, 'plane');
   }
 });
 
@@ -92,9 +93,19 @@ test('the same spec builds the same bytes twice', () => {
 });
 
 test('a broken contract stops the build before any STL is written', () => {
-  const bad = { ...SPEC, rivers: [{ size: 'river', path: [[0, 0], [1, 0]] }, { size: 'river', path: [[0, 1], [1, 1], [1, 0]] }] };
+  // An island whose two channels fall different amounts: the only river
+  // shape that is genuinely unsatisfiable.
+  const bad = {
+    ...SPEC, cols: 2, rows: 2,
+    falls: { '0,1': 30 },
+    rivers: [
+      { size: 'creek', sourceEdge: 'S', path: [[0, 0], [1, 0], [1, 1]] },
+      { size: 'creek', path: [[0, 0], [0, 1], [1, 1]] },
+    ],
+  };
   const r = buildMap(bad);
-  assert.ok(r.problems.some((p) => p.severity === 'error'));
+  assert.ok(r.problems.some((p) => p.severity === 'error' && p.kind === 'level-conflict'),
+    JSON.stringify(r.problems.map((p) => p.kind)));
 });
 
 test('STL round-trips to the right byte count', () => {

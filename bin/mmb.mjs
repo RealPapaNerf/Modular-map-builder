@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildMap } from '../lib/build.js';
 import { writeSTL, plateSTL } from '../lib/stl.js';
-import { makeContract, check, SIZES } from '../lib/contract.js';
+import { makeContract, check, SIZES, SIZE_LADDER, FALLS, sizeFor } from '../lib/contract.js';
 import { renderMap } from '../lib/preview.js';
 
 const args = process.argv.slice(2);
@@ -33,17 +33,23 @@ const EXAMPLE = {
   spine: [[0.1, 0.85], [0.5, 0.6], [0.9, 0.8]],
   volcanoes: [{ at: [0.78, 0.22], heightM: 800, baseRadiusM: 2400, breachAzimuthDeg: 210 }],
   glacier: { cycles: 30 },
+  // Steep at the head, gentler as it goes down. Falls are per tile, in whole
+  // plates, 10 to 50.
+  falls: { '1,2': 40, '1,1': 30, '1,0': 10, '2,1': 20 },
+  // An extra 20 mm of free-fall where the tributary comes off the bench.
+  waterfalls: { '1,1': 20 },
   rivers: [
-    { name: 'main', size: 'river', sourceEdge: 'N', path: [[1, 2], [1, 1], [1, 0]], sinkEdge: 'S' },
-    { name: 'trib', size: 'creek', sourceEdge: 'E', path: [[2, 1], [1, 1]] },
+    // Sizes left out are worked out from the inflow and the fall.
+    { name: 'main', sourceEdge: 'N', path: [[1, 2], [1, 1], [1, 0]], sinkEdge: 'S', size: 'creek' },
+    { name: 'trib', sourceEdge: 'E', path: [[2, 1], [1, 1]], size: 'creek' },
   ],
   contract: { tileMM: 200, plateMM: 10, outletZMM: 2, edgeLandMM: 18 },
 };
 
 function describe(r) {
   const lines = [];
-  lines.push(`Contract: ${r.contract.tileMM} mm tiles, ${r.contract.plateMM} mm plates, ` +
-             `river in at ${r.contract.inletZMM} mm and out at ${r.contract.outletZMM} mm, seam ${r.seam.style}.`);
+  lines.push(`Contract: ${r.contract.tileMM} mm tiles on ${r.contract.plateMM} mm plates, outlet at ` +
+             `${r.contract.outletZMM} mm, falls ${FALLS.join('/')} mm, seam ${r.seam.style}.`);
   for (const n of r.contractNotes) lines.push(`  ${n.severity}: ${n.message}`);
   const errs = r.problems.filter((p) => p.severity === 'error');
   const notes = r.problems.filter((p) => p.severity !== 'error');
@@ -78,18 +84,38 @@ if (cmd === 'example') {
   for (const t of r.tiles) {
     worstEdge = Math.max(worstEdge, t.edges.worst);
     if (!t.mesh.watertight) leaks++;
+    const ports = ['N', 'E', 'S', 'W']
+      .filter((e) => t.spec.edges?.[e] && t.spec.edges[e].type !== 'land')
+      .map((e) => `${e}:${t.spec.edges[e].type === 'in' ? '>' : '<'}${sizeFor(t.spec.edges[e].size).widthMM}`)
+      .join(' ') || '-';
     console.log(
-      `  ${t.label.padEnd(4)} level ${String(t.level).padStart(2)} ` +
-      `(${String(t.stack.plates).padStart(2)} plates = ${String(t.stack.standMM).padStart(3)} mm) ` +
-      `prints ${t.bbox.size[2].toFixed(1).padStart(5)} mm tall, ` +
-      `${String(t.mesh.triangles).padStart(7)} tris, ` +
-      `edge err ${t.edges.worst.toFixed(4)} mm, ` +
+      `  ${t.label.padEnd(4)} ${String(t.stack.plates).padStart(2)} plates ` +
+      `(${String(t.stack.standMM).padStart(3)} mm) fall ${String(t.fallMM).padStart(2)}  ` +
+      `${ports.padEnd(20)} prints ${t.bbox.size[2].toFixed(1).padStart(5)} mm, ` +
+      `edge err ${t.edges.worst.toFixed(4)}, ` +
       `${t.mesh.watertight ? 'closed' : 'LEAKS'}`,
     );
   }
+  const kinds = {};
+  for (const s2 of r.seamChecks) kinds[s2.kind] = (kinds[s2.kind] || 0) + 1;
+  const interesting = r.seamChecks.filter((s2) => s2.kind !== 'plane');
+  if (interesting.length) {
+    console.log('\nSeams that are not flat:');
+    for (const s2 of interesting) {
+      const h = s2.waterStepMM != null && Math.abs(s2.waterStepMM) > 1e-6
+        ? `${Math.abs(s2.waterStepMM).toFixed(0)} mm of water`
+        : `${Math.abs(s2.landStepMM).toFixed(0)} mm of land`;
+      console.log(`  ${s2.from} ${s2.edge} to ${s2.to}: ${s2.kind.toUpperCase()}, ${h}`);
+    }
+  }
+  console.log(`\nSeams: ${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}`);
   const maxLevel = Math.max(...r.tiles.map((t) => t.level));
   console.log(`\nWorst edge error across every tile: ${worstEdge.toFixed(4)} mm`);
   console.log(`Tallest stack: ${maxLevel} plates (${maxLevel * r.contract.plateMM} mm) under the highest tile.`);
+  if (maxLevel > r.contract.maxStackPlates) {
+    console.log(`  WARNING: that is ${maxLevel * r.contract.plateMM} mm of plates before the terrain starts. ` +
+                `Gentler falls, or a shorter river, would bring it down.`);
+  }
   console.log(`Total plates to print: ${r.tiles.reduce((a, t) => a + t.stack.plates, 0)}`);
   if (leaks) console.log(`${leaks} tile(s) did not come out closed.`);
   if (r.world.glacierStats) {
@@ -122,5 +148,6 @@ if (cmd === 'example') {
   node bin/mmb.mjs plate --size 200 --thick 10 --out plate.stl
   (build also writes preview.png — a hillshade of the assembled map)
 
-River sizes: ${Object.keys(SIZES).join(', ')}`);
+River sizes: ${SIZE_LADDER.map((s) => `${s.id} ${s.widthMM}mm${s.kind === 'water-body' ? ' (opening)' : ''}`).join(', ')}
+Falls per tile: ${FALLS.join(', ')} mm`);
 }
