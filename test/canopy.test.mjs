@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeField, fill } from '../lib/field.js';
-import { scatterCanopy, crownHeight, placeTrees, crownFootprintMM2, spacingForDensity, CANOPY_DEFAULTS } from '../lib/canopy.js';
+import { scatterCanopy, crownHeight, placeTrees, crownFootprintMM2, spacingForDensity, smoothMax, CANOPY_DEFAULTS } from '../lib/canopy.js';
 
 const flatTile = (extent = 120, step = 0.5, z = 20) => {
   const n = Math.round(extent / step) + 1;
@@ -241,13 +241,36 @@ test('density means measured ground cover, near enough, where crowns do not pile
   }
 });
 
-test('above about 0.7 the crowns overlap, so cover rises more slowly than asked', () => {
-  // Not a defect, and worth pinning so nobody "fixes" it: you cannot cover
-  // every square millimetre by scattering discs.
-  const f = flatTile(200, 0.5, 20);
-  const r = scatterCanopy(f, { kind: 'conifer', crownMM: 10, heightMM: 7, density: 1.0, seed: 5 });
-  assert.ok(r.coverFraction > 0.55, 'density 1 should still be a closed-looking canopy');
-  assert.ok(r.coverFraction < 0.95, 'but it cannot literally be 100%');
+test('density 1 is a closed canopy with the ground hidden', () => {
+  // This test used to assert the opposite -- that cover saturated around
+  // 0.6 and "you cannot cover every square millimetre by scattering discs".
+  // That was over-general: you cannot at a FIXED spacing, but the spacing
+  // is not fixed, and compensating for the overlap closes the canopy
+  // properly. The old version pinned a limitation of the formula as though
+  // it were a fact about trees.
+  for (const kind of ['conifer', 'deciduous']) {
+    const f = flatTile(200, 0.5, 20);
+    const r = scatterCanopy(f, { kind, crownMM: 10, heightMM: 7, density: 1.0, seed: 5 });
+    assert.ok(r.coverFraction > 0.88,
+      `${kind} at density 1 covered only ${(100 * r.coverFraction).toFixed(0)}% — the ground still shows`);
+  }
+});
+
+test('crowns fuse where they overlap instead of creasing', () => {
+  // Two crowns a little apart. Under a hard max the surface between them
+  // has a crease -- a V with a sharp bottom. Under the soft union it is
+  // rounded, which is what a closed stand looks like and what prints.
+  const sep = 6;
+  const t = (x) => ({ ...CANOPY_DEFAULTS, kind: 'conifer', crownMM: 10, heightMM: 8,
+                      id: 1, x, y: 0, phase: 0, leanX: 0, leanY: 0 });
+  const a = t(-sep / 2);
+  const b = t(sep / 2);
+  const at = (x, k) => smoothMax(crownHeight(a, x - a.x, 0), crownHeight(b, x - b.x, 0), k);
+  const hard = at(0, 0);
+  const soft = at(0, 1.4);
+  assert.ok(soft > hard, `the saddle should be filled in: ${soft.toFixed(2)} against ${hard.toFixed(2)}`);
+  // Far from any neighbour the soft union must change nothing.
+  assert.equal(smoothMax(crownHeight(a, 0, 0), 0, 1.4), crownHeight(a, 0, 0));
 });
 
 test('a lobed crown does not fill its nominal circle, and a cone roughly does', () => {
@@ -264,12 +287,19 @@ test('a lobed crown does not fill its nominal circle, and a cone roughly does', 
   assert.ok(leafy > nominal * 0.4, 'but it is still a crown, not a twig');
 });
 
-test('spacing follows from density and the measured footprint', () => {
+test('spacing accounts for crowns landing on each other', () => {
+  // cover = 1 - exp(-A/s^2), not A/s^2. Ignoring the overlap made
+  // `density: 1` come out at 0.89 of a crown diameter -- crowns just
+  // touching, ground visible between them -- so a closed canopy still read
+  // as a scatter of separate trees.
   const o = { ...CANOPY_DEFAULTS, kind: 'conifer', crownMM: 10, heightMM: 7, density: 0.25 };
+  const A = crownFootprintMM2(o);
   const s = spacingForDensity(o);
-  // One crown per cell of side s, covering `density` of it.
-  assert.ok(Math.abs((crownFootprintMM2(o) / (s * s)) - 0.25) < 1e-6);
-  assert.ok(spacingForDensity({ ...o, density: 1.0 }) < s, 'denser means closer');
+  assert.ok(Math.abs((1 - Math.exp(-A / (s * s))) - 0.25) < 1e-6);
+  const tight = spacingForDensity({ ...o, density: 1.0 });
+  assert.ok(tight < s, 'denser means closer');
+  assert.ok(tight < 0.55 * o.crownMM,
+    `a closed canopy needs real overlap, got ${(tight / o.crownMM).toFixed(2)} of a crown diameter`);
 });
 
 test('an explicit spacing overrides density', () => {

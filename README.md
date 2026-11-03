@@ -472,9 +472,31 @@ measured at runtime by stamping one tree and counting, because every shape
 parameter changes the answer and a constant calibrated once would drift the
 next time one was tuned.
 
-Above about 0.7 the crowns start landing on each other, so measured cover
-rises more slowly than asked. You cannot cover every square millimetre by
-scattering discs; `1.0` means a closed canopy, not literally 100%.
+**Crowns are meant to overlap, and the spacing law has to allow for it.**
+Dividing the footprint by the target cover assumes they never land on each
+other. They do, and once they do every extra tree covers less new ground than
+the last — so `density: 1` came out at 0.89 of a crown diameter, crowns just
+touching, ground visible between them, and a closed canopy that still read as
+a scatter of separate trees.
+
+Scattered crowns cover ground like a Poisson process, so
+
+```
+cover = 1 − exp(−A / s²)    ⟹    s = √( A / −ln(1 − cover) )
+```
+
+At `1.0` that is **0.39** of a crown diameter instead of 0.89, which is proper
+overlap, and measured cover goes from 58% to 94%. (An earlier version of this
+file claimed you simply cannot cover every square millimetre by scattering
+discs. That was over-general — you cannot at a *fixed* spacing, but the
+spacing is not fixed.)
+
+And they fuse rather than crease. A plain `max` of two crowns leaves a sharp
+V where they cross, so a dense stand reads as separate trees pressed together.
+A soft union blends them over `mergeFraction` of the tree height: far apart it
+is exactly `max`, so a lone tree is untouched and low density still reads as
+distinct trees — where they overlap, they interlock, as crowns do in a closed
+stand.
 
 To see the range rather than guess at it:
 
@@ -499,9 +521,8 @@ above is many bumps at a quarter the width of the crown, so it is nine lobes
 at under a third of the radius, over a small core that only exists to stop the
 crown having a hole in the middle.
 
-Crowns combine with **max**, never by adding. Adding makes a dense wood swell
-into one mound and lose every crown edge; max keeps the gaps, and the gaps are
-what the eye reads as trees.
+Crowns combine with a **smooth max**, never by adding. Adding makes a dense
+wood swell into one mound and lose every crown edge.
 
 | rule | why |
 |---|---|
@@ -648,7 +669,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-93 checks. The ones that earn their keep:
+94 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -680,6 +701,10 @@ npm test
   pile up
 - a lobed crown does not fill its nominal circle and a cone roughly does —
   the reason the footprint is measured rather than assumed
+- spacing accounts for crowns landing on each other; density 1 is a closed
+  canopy with the ground hidden
+- crowns fuse where they overlap instead of creasing, and a lone tree is
+  untouched by the fusing
 - **a river follows the valley the glacier left** — the regression for a
   router that never read the terrain
 - a river will not climb a ridge to save distance

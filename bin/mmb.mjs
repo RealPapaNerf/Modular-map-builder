@@ -48,9 +48,9 @@ const EXAMPLE = {
   // Woods. maxZMM is a treeline and it is the cheapest thing in the file
   // that makes a mountain read right; maxSlopeDeg keeps them off the cliffs.
   canopy: [
-    { kind: 'conifer', crownMM: 7, heightMM: 9, density: 0.45,
+    { kind: 'conifer', crownMM: 7, heightMM: 9, density: 0.62,
       minZMM: 34, maxZMM: 96, thinningMM: 18, maxSlopeDeg: 36 },
-    { kind: 'deciduous', crownMM: 12, heightMM: 7, density: 0.35,
+    { kind: 'deciduous', crownMM: 12, heightMM: 7, density: 0.5,
       maxZMM: 40, thinningMM: 10, maxSlopeDeg: 24 },
   ],
   contract: { tileMM: 200, plateMM: 10, outletZMM: 2, edgeLandMM: 18 },
