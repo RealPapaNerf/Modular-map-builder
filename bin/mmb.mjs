@@ -11,10 +11,12 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildMap } from '../lib/build.js';
 import { writeSTL, plateSTL } from '../lib/stl.js';
+import { meshTile } from '../lib/mesh.js';
 import { makeContract, check, SIZES, SIZE_LADDER, FALLS, sizeFor } from '../lib/contract.js';
 import { renderMap, encodePNG } from '../lib/preview.js';
 import { scatterCanopy, spacingForDensity } from '../lib/canopy.js';
 import { makeField } from '../lib/field.js';
+import { trayField } from '../lib/fountain.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -57,6 +59,10 @@ const EXAMPLE = {
   // where you want it. Depths are millimetres on the print, and the plan
   // says how many millilitres of epoxy each tile takes.
   lakes: { fillHollows: true, depthMM: 5, shoreMM: 10, profile: 'dish' },
+  // Springs go in automatically wherever a river enters the map from
+  // nowhere, which is exactly where a pump has to put the water. 3/8" ID
+  // vinyl is 1/2" outside.
+  fountains: { auto: true, tubeOdMM: 12.7, poolRadiusMM: 16 },
   // outletZMM 6 rather than the 2 the brief started from. The fall is
   // unchanged, so every plate count is the same -- but it puts 6 mm of
   // plate under the channel where it leaves the tile instead of 2, and it
@@ -171,6 +177,21 @@ if (cmd === 'canopy') {
     }
   }
   console.log(`\nSeams: ${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}`);
+  const springs = r.tiles.flatMap((t) => (t.springs || []).map((sp) => ({ tile: t.label, level: t.level, ...sp })));
+  if (springs.length) {
+    console.log('\nFountain:');
+    for (const sp of springs) {
+      console.log(`  ${sp.tile.padEnd(4)} spring at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm — ` +
+                  `pool bed ${sp.bedMM.toFixed(1)} mm, spills at ${sp.spillMM.toFixed(1)} mm, ` +
+                  `${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube`);
+      if (sp.level > 0) {
+        console.log(`       the ${sp.level} plate(s) under ${sp.tile} need the same hole, ` +
+                    `${(sp.bore.rMM * 2).toFixed(1)} mm at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm`);
+      }
+    }
+    const plain = r.tiles.reduce((a, t) => a + t.stack.plates, 0) - springs.reduce((a, sp) => a + sp.level, 0);
+    console.log(`  Plates: ${plain} plain, ${springs.reduce((a, sp) => a + sp.level, 0)} drilled.`);
+  }
   const water = r.tiles.flatMap((t) => (t.lakes || []).map((l) => ({ tile: t.label, ...l })));
   if (water.length) {
     const ml = water.reduce((a, l) => a + l.millilitres, 0);
@@ -212,8 +233,34 @@ if (cmd === 'canopy') {
       writeFileSync(f, writeSTL(t.tris, `${spec.name || 'map'} ${t.label}`));
     }
     writeFileSync(join(dir, 'plate.stl'), plateSTL(r.contract.tileMM, r.contract.tileMM, r.contract.plateMM));
+    // A plate with a tube through it is not the same part as one without,
+    // so it gets its own file. Two plates of the same size only swap if
+    // they are drilled the same.
+    for (const t of r.tiles) {
+      if (!(t.springs || []).length || t.stack.plates === 0) continue;
+      const stepMM = 1.5;
+      const n = Math.round(r.contract.tileMM / stepMM) + 1;
+      const flat = makeField(n, n, r.contract.tileMM / (n - 1));
+      flat.values.fill(r.contract.plateMM);
+      const tris = meshTile(flat, { bores: t.springs.map((sp) => sp.bore) });
+      writeFileSync(join(dir, `plate-drilled-${t.label}.stl`), writeSTL(tris, `plate ${t.label}`));
+    }
     const { png } = renderMap(r);
     writeFileSync(join(dir, 'preview.png'), png);
+    // The tray the whole thing stands in, if there is a pump to stand in it.
+    if (r.tiles.some((t) => (t.springs || []).length)) {
+      let maxCol = 0;
+      let maxRow = 0;
+      for (const t of r.tiles) { maxCol = Math.max(maxCol, t.spec.col); maxRow = Math.max(maxRow, t.spec.row); }
+      const tray = trayField(makeField, {
+        widthMM: (maxCol + 1) * r.contract.tileMM,
+        depthMM: (maxRow + 1) * r.contract.tileMM,
+        ...(spec.tray || {}),
+      });
+      writeFileSync(join(dir, 'tray.stl'), writeSTL(meshTile(tray.field), 'tray'));
+      console.log(`tray.stl: ${tray.outerMM.map((v) => v.toFixed(0)).join(' x ')} x ${tray.heightMM} mm, ` +
+                  `the map rests at ${tray.sitsAtMM} mm. It will need splitting for your bed.`);
+    }
     console.log(`\nWrote ${r.tiles.length} tiles, plate.stl and preview.png to ${dir}/ in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   }
 } else {

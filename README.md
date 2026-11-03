@@ -492,6 +492,77 @@ full depth `shoreMM` in from the shoreline; they differ only in the shape of
 the ramp, and the rounded one gets there sooner — so a **dish holds more than
 a flat bed**, which is the opposite of what the names suggest.
 
+## Fountains
+
+```json
+"fountains": { "auto": true, "tubeOdMM": 12.7, "poolRadiusMM": 16 }
+```
+
+**The circuit.** A pump sits in a tray under the assembled map. A tube runs
+up through the plate stack and comes out at a spring near the top. From there
+the water is on its own: down the channel, over each seam, one plate lower
+every tile, and off the drain edge back into the tray. Nothing is pumped
+sideways and **no tube crosses a seam**, because a tube across a seam is a map
+that cannot be taken apart.
+
+**The map already knew where the fountains go.** An inlet with nothing
+upstream of it is a port taking water from off the map — which `check` has
+been reporting all along as *"takes a river in at its N side from off the map.
+That needs a fountain or a hose."* `auto` puts a spring at exactly those
+points, on the channel, far enough in that its lip clears the rim.
+
+### A spring is a pool, not a nozzle
+
+A tube opening straight onto a hillside squirts — there is nothing between the
+pump and the air — and a jet at the top of a map is where you least want one.
+So the tube opens into a small pool with a raised lip and **one notch**, and
+the water leaves over the notch at whatever rate it arrives. The pool takes
+the velocity out. The notch faces down-channel, worked out from the river's
+own direction at that point.
+
+relief solves this with a buffer chamber under a lid whose top is the real
+ground, so from above there is no pool at all. That needs rock standing over
+air — a column holding more than one solid interval — and nothing here does
+that yet. A pool is the honest version: all height field, watertight by
+construction, and it works.
+
+### A round hole through a height field
+
+This is the one piece of geometry that cannot be done by moving vertices up
+and down, so it has a construction of its own. A **block of grid cells is
+removed**, leaving a rectangular hole whose corners are exact grid vertices,
+and the gap between that rectangle and the circle is stitched as an annulus.
+Both loops are closed and both are walked by bearing about the bore's axis, so
+the stitch cannot tangle however the counts differ.
+
+The obvious alternative — clipping each straddling cell against the circle —
+is marching squares: a different case per cell and three chances per cell to
+leave an unpaired edge. This way the only new vertices are *on* the circle,
+and they are shared by the top, the shaft and the underside because all three
+are built from the same list.
+
+One consequence: with a bore, the underside can no longer be a fan from the
+middle, because the fan would cross the hole. It is meshed as a grid instead,
+which costs triangles on exactly the tiles that need it and nothing on the
+rest.
+
+### Drilled plates are a different part
+
+A plate with a tube through it does not swap with one without. The plan says
+which is which — *"the 6 plates under B3 need the same hole, 13.5 mm at
+115,161 mm"* — and `build` writes `plate-drilled-B3.stl` alongside the plain
+`plate.stl`.
+
+### The tray
+
+Written as `tray.stl` whenever the map has a spring: a flat floor, four walls,
+and a ledge the plates rest on so the map sits a little above the water with a
+gap all round for runoff to fall back in. The pump lives under the map and its
+cord leaves through a notch in the back wall.
+
+It comes out the size of the whole map, so **it will need splitting for your
+bed** — the tool says so rather than pretending otherwise.
+
 ## Woods
 
 Trees are **placed and stamped**, not noised. A noise field tuned to look
@@ -692,11 +763,12 @@ lib/glacier.js     shallow-ice flow with sliding, abrading its own bed
 lib/hillslope.js   critical-angle failure, and creep
 lib/basins.js      closed hollows, by priority-flood — the proof the ice worked
 lib/lake.js        tarns, lakes and bay mouths: one carve, three ways in
+lib/fountain.js    spring pools, tube bores, drilled plates and the tray
 lib/canopy.js      woods: conifer spires and broadleaf cauliflower
 lib/river.js       least-cost routing over the ground, meanders, and carving
 lib/heap.js        a binary min-heap, for the flood and the route
 lib/tile.js        the ONE place metres become millimetres
-lib/mesh.js        height field -> closed solid, with a watertightness check
+lib/mesh.js        height field -> closed solid, with bores and a watertightness check
 lib/stl.js         binary STL, and the stacking plate
 lib/preview.js     hillshaded PNG of the assembled map
 lib/build.js       spec in, printable tiles out
@@ -732,7 +804,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-107 checks. The ones that earn their keep:
+118 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -774,6 +846,11 @@ npm test
 - no lake touches the rim; one that would is reported, not clipped
 - the fill does not leak diagonally through a one-cell gap
 - volume in millilitres matches the geometry
+- a bore leaves the mesh closed, at four radii and with two bores at once
+- the bore is round, not a staircase
+- the tube comes out under water, in the middle of the pool
+- a pool too small for its own tube is refused, not fudged
+- every plate under a spring needs the same hole
 - **a river follows the valley the glacier left** — the regression for a
   router that never read the terrain
 - a river will not climb a ridge to save distance
@@ -786,11 +863,13 @@ npm test
 Working and tested end to end: contract, plate levels, seam proofs, river
 routing and carving, tile cutting, watertight meshing, STL, preview.
 
-Not built yet: fountain outlets and buffer chambers; the dog-bone key
-geometry; the drip tray; mesa stratigraphy wired into a fluvial incision pass
-(`makeStrata` exists, nothing calls it); and a browser UI.
+Not built yet: the dog-bone key geometry; a manifold, for feeding more than
+one spring from one pump; buffer chambers under a lid, which need rock over
+air; mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
+exists, nothing calls it); and a browser UI.
 
-Next: **fountains**.
+Next: the **dog-bone key** geometry, and mesa stratigraphy wired into a
+fluvial pass.
 
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 `erosionK` are the levers.
