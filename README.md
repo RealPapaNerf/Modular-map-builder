@@ -430,6 +430,68 @@ zero so the ports stay exactly where the contract put them, and bends are
 clamped clear of the rim so they cannot fight the contract — which always
 wins.
 
+## Standing water
+
+Tarns, lakes and the mouths of bays are **one operation**, not three. All of
+them are a flat surface at some level, everything below it connected to a
+seed, and a bed scooped under it. What differs is only where the seed comes
+from and what sets the level: the glacier's own hollow, a point on the map, or
+the port in the rim.
+
+```json
+"lakes": { "fillHollows": true, "depthMM": 5, "shoreMM": 10, "profile": "dish",
+           "place": [{ "tile": "B2", "atMM": [120, 80], "depthMM": 6 }] }
+```
+
+### Tarns are the payoff for the glacier
+
+A river **cannot** leave a closed hollow — water running downhill fills them
+as it goes — so every hollow on the map is somewhere the ice overdeepened its
+bed. `lib/basins.js` finds them by priority-flood, and the water sits at the
+**sill**: the lowest point it would have to cross to get out, which the flood
+has already computed.
+
+A shallow hollow gets a shallow lake. Scooping a fixed 5 mm out of a 1 mm dip
+would turn a damp patch into a quarry.
+
+### Flood or excavate
+
+Two ways to decide how far water reaches, and they are not interchangeable:
+
+| | |
+|---|---|
+| **flood** | everything below the surface connected to the seed. Right for a lake filling ground that is already low |
+| **excavate** (`radiusMM`) | a lobed disc, dug out whatever the ground was doing. Right for a bay or fjord mouth, where the water is a given and the land gets out of its way |
+
+Flooding a bay mouth silently produced *nothing*: its surface sits at the port
+floor, near the very bottom of the tile, no ground inland is below that, so
+the fill found zero cells and reported "too small".
+
+### What the geometry forces
+
+- **A lake is a hole**, not a painted surface — so you can pour clear epoxy
+  into it. Volume is reported in millilitres, per lake and per map.
+- **The bed is only ever cut down.** Setting it outright would fill a deep
+  cirque back in to a fixed depth, so a tarn in a 25 mm hollow would come out
+  5 mm deep.
+- **Carved after the tile is conformed**, because the contract is fitted by
+  adding a smooth correction across the whole tile and that would *tilt* a
+  flat water surface.
+- **Nothing is clipped at a seam.** A hollow that reaches the rim is reported
+  and left alone, not cut in half. Same rule as trees and alcoves.
+- **The fill is four-connected.** Eight-connected leaks diagonally through a
+  one-cell gap, and a lake that escapes its basin is invisible until it is
+  printed.
+- A bay's depth is limited by `outletZMM`, because its surface is the lowest
+  water on the map. At the original 2 mm there is no room for a bed at all and
+  it says so. The example now uses **6 mm** — same fall, same plate counts,
+  three times the floor under the channel.
+
+`dish`, `flat` and `cone` are the bed profiles. Both `dish` and `flat` reach
+full depth `shoreMM` in from the shoreline; they differ only in the shape of
+the ramp, and the rounded one gets there sooner — so a **dish holds more than
+a flat bed**, which is the opposite of what the names suggest.
+
 ## Woods
 
 Trees are **placed and stamped**, not noised. A noise field tuned to look
@@ -629,6 +691,7 @@ lib/terrain.js     uplift: spine, roughness, flats, volcanoes, stratigraphy
 lib/glacier.js     shallow-ice flow with sliding, abrading its own bed
 lib/hillslope.js   critical-angle failure, and creep
 lib/basins.js      closed hollows, by priority-flood — the proof the ice worked
+lib/lake.js        tarns, lakes and bay mouths: one carve, three ways in
 lib/canopy.js      woods: conifer spires and broadleaf cauliflower
 lib/river.js       least-cost routing over the ground, meanders, and carving
 lib/heap.js        a binary min-heap, for the flood and the route
@@ -669,7 +732,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-94 checks. The ones that earn their keep:
+107 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -705,6 +768,12 @@ npm test
   canopy with the ground hidden
 - crowns fuse where they overlap instead of creasing, and a lone tree is
   untouched by the fusing
+- a closed hollow becomes a tarn, and its surface is flat
+- a lake is a hole: it never raises the ground
+- a tarn in a deep cirque is not made shallower than the hollow it sits in
+- no lake touches the rim; one that would is reported, not clipped
+- the fill does not leak diagonally through a one-cell gap
+- volume in millilitres matches the geometry
 - **a river follows the valley the glacier left** — the regression for a
   router that never read the terrain
 - a river will not climb a ridge to save distance
@@ -717,14 +786,11 @@ npm test
 Working and tested end to end: contract, plate levels, seam proofs, river
 routing and carving, tile cutting, watertight meshing, STL, preview.
 
-Not built yet: lakes and tarns as scooped basins — which is what a **dam**
-seam needs, since nothing carves the reservoir that ponds behind one yet, and
-what the cirque floors the ice now leaves are waiting for;
-fountain outlets and buffer chambers; the dog-bone key geometry; the drip
-tray; mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
-exists, nothing calls it); and a browser UI.
+Not built yet: fountain outlets and buffer chambers; the dog-bone key
+geometry; the drip tray; mesa stratigraphy wired into a fluvial incision pass
+(`makeStrata` exists, nothing calls it); and a browser UI.
 
-Next: **lakes and tarn basins**, then **fountains**.
+Next: **fountains**.
 
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 `erosionK` are the levers.

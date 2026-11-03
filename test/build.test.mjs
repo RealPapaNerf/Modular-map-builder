@@ -75,13 +75,30 @@ test('a river tile really does have a channel cut into it', () => {
     `the channel bottoms out at ${lowest.toFixed(2)} mm, no lower than the inlet`);
 });
 
-test('a dry tile is never cut below its land datum', () => {
-  const r = buildMap(SPEC);
+test('with no water, a dry tile is never cut below its land datum', () => {
+  const r = buildMap({ ...SPEC, lakes: { fillHollows: false } });
   const dry = r.tiles.find((t) => t.channels === 0);
   assert.ok(dry, 'this map should have a dry tile');
   let lowest = Infinity;
   for (const v of dry.local.values) lowest = Math.min(lowest, v);
   assert.ok(lowest >= r.contract.edgeLandMM - 1e-6);
+});
+
+test('a tarn IS a cut below the land datum, and only a lake may make one', () => {
+  // The previous test used to assert this could never happen, which was
+  // true right up until hollows got filled. A hollow with water in it is a
+  // hole in the plate by definition.
+  const r = buildMap(SPEC);
+  for (const t of r.tiles) {
+    let lowest = Infinity;
+    let lowestK = -1;
+    for (let k = 0; k < t.local.values.length; k++) {
+      if (t.local.values[k] < lowest) { lowest = t.local.values[k]; lowestK = k; }
+    }
+    if (lowest >= r.contract.edgeLandMM - 1e-6) continue;
+    assert.ok(t.wet[lowestK] || t.channels > 0,
+      `${t.label} is cut to ${lowest.toFixed(2)} mm at a cell that is neither lake nor river`);
+  }
 });
 
 test('the same spec builds the same bytes twice', () => {

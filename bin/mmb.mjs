@@ -42,7 +42,7 @@ const EXAMPLE = {
   waterfalls: { '1,1': 20 },
   rivers: [
     // Sizes left out are worked out from the inflow and the fall.
-    { name: 'main', sourceEdge: 'N', path: [[1, 2], [1, 1], [1, 0]], sinkEdge: 'S', size: 'creek' },
+    { name: 'main', sourceEdge: 'N', path: [[1, 2], [1, 1], [1, 0]], sinkEdge: 'S', sinkSize: 'bay', size: 'creek' },
     { name: 'trib', sourceEdge: 'E', path: [[2, 1], [1, 1]], size: 'creek' },
   ],
   // Woods. maxZMM is a treeline and it is the cheapest thing in the file
@@ -53,7 +53,15 @@ const EXAMPLE = {
     { kind: 'deciduous', crownMM: 12, heightMM: 7, density: 0.5,
       maxZMM: 40, thinningMM: 10, maxSlopeDeg: 24 },
   ],
-  contract: { tileMM: 200, plateMM: 10, outletZMM: 2, edgeLandMM: 18 },
+  // Water that stands. Hollows the ice left become tarns; `place` puts one
+  // where you want it. Depths are millimetres on the print, and the plan
+  // says how many millilitres of epoxy each tile takes.
+  lakes: { fillHollows: true, depthMM: 5, shoreMM: 10, profile: 'dish' },
+  // outletZMM 6 rather than the 2 the brief started from. The fall is
+  // unchanged, so every plate count is the same -- but it puts 6 mm of
+  // plate under the channel where it leaves the tile instead of 2, and it
+  // gives a bay mouth room for a bed. See the README on the flow rule.
+  contract: { tileMM: 200, plateMM: 10, outletZMM: 6, edgeLandMM: 22 },
 };
 
 function describe(r) {
@@ -143,7 +151,8 @@ if (cmd === 'canopy') {
     console.log(
       `  ${t.label.padEnd(4)} ${String(t.stack.plates).padStart(2)} plates ` +
       `(${String(t.stack.standMM).padStart(3)} mm) fall ${String(t.fallMM).padStart(2)}  ` +
-      `${ports.padEnd(20)} ${String(t.trees || 0).padStart(4)} trees  ` +
+      `${ports.padEnd(20)} ${String(t.trees || 0).padStart(4)} trees ` +
+      `${(t.millilitres ? t.millilitres.toFixed(1) + 'ml' : '  -  ').padStart(7)} ` +
       `prints ${t.bbox.size[2].toFixed(1).padStart(5)} mm, ` +
       `edge err ${t.edges.worst.toFixed(4)}, ` +
       `${t.mesh.watertight ? 'closed' : 'LEAKS'}`,
@@ -162,6 +171,21 @@ if (cmd === 'canopy') {
     }
   }
   console.log(`\nSeams: ${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}`);
+  const water = r.tiles.flatMap((t) => (t.lakes || []).map((l) => ({ tile: t.label, ...l })));
+  if (water.length) {
+    const ml = water.reduce((a, l) => a + l.millilitres, 0);
+    const byKind = {};
+    for (const l of water) byKind[l.what] = (byKind[l.what] || 0) + 1;
+    console.log(`\nStanding water: ${Object.entries(byKind).map(([k, v]) => `${v} ${k}${v > 1 ? 's' : ''}`).join(', ')}, ` +
+                `${ml.toFixed(1)} ml of epoxy in all.`);
+    for (const l of water.sort((a, b) => b.millilitres - a.millilitres).slice(0, 6)) {
+      console.log(`  ${l.tile.padEnd(4)} ${l.what.padEnd(10)} ${l.areaMM2.toFixed(0).padStart(6)} mm2  ` +
+                  `${l.deepestMM.toFixed(1).padStart(4)} mm deep  ${l.millilitres.toFixed(2).padStart(6)} ml` +
+                  (l.clamped ? `  (${l.clamped} cells hit the floor)` : ''));
+    }
+  }
+  const skipped = r.tiles.flatMap((t) => (t.lakesSkipped || []).map((x) => ({ tile: t.label, ...x })));
+  for (const sk of skipped) console.log(`  ${sk.tile}: ${sk.what} not carved — ${sk.why}`);
   const maxLevel = Math.max(...r.tiles.map((t) => t.level));
   console.log(`\nWorst edge error across every tile: ${worstEdge.toFixed(4)} mm`);
   console.log(`Tallest stack: ${maxLevel} plates (${maxLevel * r.contract.plateMM} mm) under the highest tile.`);
