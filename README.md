@@ -492,6 +492,77 @@ full depth `shoreMM` in from the shoreline; they differ only in the shape of
 the ramp, and the rounded one gets there sooner — so a **dish holds more than
 a flat bed**, which is the opposite of what the names suggest.
 
+## Seam keys
+
+A seam butts on nothing. Two tiles sitting side by side on a table slide
+apart the moment a child leans on them, and a river that was lined up to a
+hundredth of a millimetre is then a river with a step in it.
+
+So every seam that can take one gets a **dog-bone key**: a wide pad in each
+tile joined by a narrow neck across the seam, dropped into a recess cut in
+the **underside** of the two plates. The map face above is untouched. Pulling
+the tiles apart would mean dragging a pad through the neck, so the seam cannot
+open, and the pads register the two tiles in every direction at once.
+
+```json
+"joints": { "padMM": 20, "neckMM": 9, "reachMM": 14,
+            "depthMM": 3, "clearanceMM": 0.35, "spacingMM": 120 }
+```
+
+**Square shoulders, not a dovetail.** They hold the same — it is the neck
+being narrower than the pad that locks, not the angle — and they print without
+feather edges. A dovetail would in any case only work along one axis, and a
+tile in the middle of a grid has seams on four sides; you cannot slide it in
+from four directions at once.
+
+**Not glued.** This is where it parts company with relief, which keys a seam
+at 0.15 mm and glues it because a wall map is assembled once. This one comes
+apart on the table every time it is played with, so the fit is a **0.35 mm
+slip fit** and the key is a loose part you drop in. The clearance is the whole
+difference between a map you can put away and a map you have built.
+
+### Most seams get no key, and you should know which
+
+A key is cut into both undersides, so the two tiles have to **be at the same
+plate level**. Two tiles one plate apart have undersides 10 mm apart and
+cannot share anything cut into them — and every level change on a map is along
+the river, because that is what the plate stack *is*.
+
+On the example map that is **7 of 12 seams**, and the plan says so:
+
+```
+Seam keys: 10 planned, 20 of 20 recesses cut.
+  7 seam(s) have a plate step and take no key: B2/B3, B2/C2, B1/B2, ...
+  Those tiles are registered by the plate stack under them, not by a key.
+```
+
+Keying the **plates** to each other, and the tile to its topmost plate, would
+close that gap. It is the obvious next piece and it is not built.
+
+### Refused whole, never cut short
+
+Where the plate runs thin — under a river channel, under a lake bed, beside a
+tube bore — the key is **left out entirely** and counted:
+
+```
+the plate is only 2.5 mm there, and a 3 mm recess would leave -0.5 mm
+```
+
+A recess a key cannot sit in is worse than no recess at all: the tile rocks.
+relief makes the same call for the same reason.
+
+### Ear clipping, because a dog-bone is not convex
+
+Both shoulders are reflex corners, so a triangle fan from one vertex puts
+faces outside the shape. The alternative — decomposing it into three
+rectangles by hand — leaves a T-junction where the narrow neck meets the wide
+pad, and the solid leaks there. Thirty lines of ear clipping, and the outline
+vertices are shared by the top, the underside and the walls, so it closes by
+construction.
+
+`build` writes `keys.stl` (a sheet of as many as the map actually needs) and
+`key-one.stl`. Print them flat.
+
 ## Fountains
 
 ```json
@@ -764,6 +835,7 @@ lib/hillslope.js   critical-angle failure, and creep
 lib/basins.js      closed hollows, by priority-flood — the proof the ice worked
 lib/lake.js        tarns, lakes and bay mouths: one carve, three ways in
 lib/fountain.js    spring pools, tube bores, drilled plates and the tray
+lib/joint.js       dog-bone keys, their recesses, and the ear clipper
 lib/canopy.js      woods: conifer spires and broadleaf cauliflower
 lib/river.js       least-cost routing over the ground, meanders, and carving
 lib/heap.js        a binary min-heap, for the flood and the route
@@ -804,7 +876,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-118 checks. The ones that earn their keep:
+131 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -851,6 +923,12 @@ npm test
 - the tube comes out under water, in the middle of the pool
 - a pool too small for its own tube is refused, not fudged
 - every plate under a spring needs the same hole
+- the key is a closed solid despite its reflex corners
+- the two halves of a key land on the same point of the seam
+- keys go only between tiles at the same plate level
+- a recess never breaks through to the map face
+- a recess where the plate runs thin is refused **whole**, not cut short
+- the key is smaller than its recess by the clearance, so it drops in
 - **a river follows the valley the glacier left** — the regression for a
   router that never read the terrain
 - a river will not climb a ridge to save distance
@@ -863,12 +941,14 @@ npm test
 Working and tested end to end: contract, plate levels, seam proofs, river
 routing and carving, tile cutting, watertight meshing, STL, preview.
 
-Not built yet: the dog-bone key geometry; a manifold, for feeding more than
-one spring from one pump; buffer chambers under a lid, which need rock over
-air; mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
-exists, nothing calls it); and a browser UI.
+Not built yet: keys between the **plates** (so a seam with a level change is
+registered by more than friction); a manifold, for feeding more than one
+spring from one pump; buffer chambers under a lid, which need rock over air;
+mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
+nothing calls it); and a browser UI.
 
-Next: the **dog-bone key** geometry, and mesa stratigraphy wired into a
+Next: **keying the plates to each other**, which is what the seven unkeyed
+seams on the example map are waiting for; then mesa stratigraphy wired into a
 fluvial pass.
 
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /

@@ -17,6 +17,7 @@ import { renderMap, encodePNG } from '../lib/preview.js';
 import { scatterCanopy, spacingForDensity } from '../lib/canopy.js';
 import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
+import { keySheet, keySolid } from '../lib/joint.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -177,6 +178,33 @@ if (cmd === 'canopy') {
     }
   }
   console.log(`\nSeams: ${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}`);
+  const keyCount = r.keys.length;
+  const placed = r.tiles.reduce((a, t) => a + (t.keys || []).length, 0);
+  const refused = r.tiles.flatMap((t) => (t.keysRefused || []).map((k) => ({ tile: t.label, ...k })));
+  if (keyCount) {
+    const halves = keyCount * 2;
+    console.log(`\nSeam keys: ${keyCount} planned, ${placed} of ${halves} recesses cut.`);
+    console.log(`  ${r.joint.padMM} mm pad on a ${r.joint.neckMM} mm neck, ${r.joint.depthMM} mm deep, ` +
+                `${r.joint.clearanceMM} mm slip fit — NOT glued, so the map comes apart.`);
+    const byWhy = {};
+    for (const k of refused) byWhy[k.why.replace(/[\d.]+/g, 'N')] = (byWhy[k.why.replace(/[\d.]+/g, 'N')] || 0) + 1;
+    for (const [why, n] of Object.entries(byWhy)) console.log(`  ${n} half-recess(es) left out: ${why}`);
+    const bothSides = r.keys.filter((k) => {
+      const ta = r.tiles.find((t) => t.spec.col === k.a.col && t.spec.row === k.a.row);
+      const tb = r.tiles.find((t) => t.spec.col === k.b.col && t.spec.row === k.b.row);
+      return ta?.keys.some((x) => x.id === k.id) && tb?.keys.some((x) => x.id === k.id);
+    });
+    console.log(`  ${bothSides.length} key(s) have both halves and will actually hold. Print that many.`);
+    // The seams that get nothing. On a map with much relief this is most of
+    // them, and it is better said than discovered on the table.
+    const stepped = r.seamChecks.filter((sc) => !r.keys.some((k) =>
+      (k.id.startsWith(`${sc.from}-${sc.edge}-`))));
+    if (stepped.length) {
+      console.log(`  ${stepped.length} seam(s) have a plate step and take no key: ` +
+                  `${stepped.map((sc) => `${sc.from}/${sc.to}`).join(', ')}.`);
+      console.log('  Those tiles are registered by the plate stack under them, not by a key.');
+    }
+  }
   const springs = r.tiles.flatMap((t) => (t.springs || []).map((sp) => ({ tile: t.label, level: t.level, ...sp })));
   if (springs.length) {
     console.log('\nFountain:');
@@ -233,6 +261,15 @@ if (cmd === 'canopy') {
       writeFileSync(f, writeSTL(t.tris, `${spec.name || 'map'} ${t.label}`));
     }
     writeFileSync(join(dir, 'plate.stl'), plateSTL(r.contract.tileMM, r.contract.tileMM, r.contract.plateMM));
+    const usable = r.keys.filter((k) => {
+      const ta = r.tiles.find((t) => t.spec.col === k.a.col && t.spec.row === k.a.row);
+      const tb = r.tiles.find((t) => t.spec.col === k.b.col && t.spec.row === k.b.row);
+      return ta?.keys.some((x) => x.id === k.id) && tb?.keys.some((x) => x.id === k.id);
+    }).length;
+    if (usable) {
+      writeFileSync(join(dir, 'keys.stl'), writeSTL(keySheet(usable, r.joint), 'seam keys'));
+      writeFileSync(join(dir, 'key-one.stl'), writeSTL(keySolid(r.joint), 'seam key'));
+    }
     // A plate with a tube through it is not the same part as one without,
     // so it gets its own file. Two plates of the same size only swap if
     // they are drilled the same.
