@@ -381,6 +381,55 @@ than its critical angle, and what comes off piles up where it lands.
 
 ---
 
+## Rivers that follow their valley
+
+The first version drew a Bezier between the two ports with a little noise on
+the control points, and **never read the terrain at all**. So the ice would
+spend thirty seconds carving a trough and the river would then wander across
+it, over the shoulder and down the other side. A river that ignores its own
+valley is the most visible thing that can be wrong with a map like this.
+
+It is now a least-cost route over the ground, with three terms plus one that
+is not physics:
+
+| term | why |
+|---|---|
+| distance | so it does not take scenic detours for nothing |
+| height | water prefers low ground, normalised against the tile's own relief so the same weight behaves the same on a mountain and a plain |
+| climbing | paid only going **up**. Without it a path will happily cross a ridge if the far side is low enough to pay for it |
+| wander | small deterministic noise, because on a floodplain every route costs the same and the shortest is a straight line |
+
+Measured against a valley whose axis swings 55 mm off the straight port-to-port
+line: the routed river sits **1.6 mm** from the axis, the old curve **27.8 mm**.
+
+### Route before conforming
+
+This one is subtle and cost a rebuild to spot. Conforming the tile to its rim
+*first* digs a trough: the rim profile has a deep notch at each port, and the
+transfinite patch that fits the interior to it interpolates between those
+notches, leaving a straight channel-shaped depression down the middle of the
+tile. Route on that and every river comes out dead straight — faithfully
+following a valley the rim fitting invented. So the order is **route, then
+conform, then carve, then conform again**.
+
+### Meandering is confinement, not noise
+
+Raising the wander term does not make a river meander: it saturates around
+sinuosity 1.07, because a detour has to pay for its own extra length and a
+cost field can only discount so much.
+
+So meandering goes in as what it actually is. A river meanders where it has
+**room** — on a floodplain, by eroding one bank and building the other — and
+it does not meander in a gorge, because the walls are in the way. The lateral
+offset is scaled by how free each point is: probe the ground either side, and
+where it rises steeply, stop pushing.
+
+One number, both behaviours. On a floodplain sinuosity comes out around 1.2;
+in a gorge the river does not move off its axis at all. Both ends taper to
+zero so the ports stay exactly where the contract put them, and bends are
+clamped clear of the rim so they cannot fight the contract — which always
+wins.
+
 ## Woods
 
 Trees are **placed and stamped**, not noised. A noise field tuned to look
@@ -520,7 +569,8 @@ lib/glacier.js     shallow-ice flow with sliding, abrading its own bed
 lib/hillslope.js   critical-angle failure, and creep
 lib/basins.js      closed hollows, by priority-flood — the proof the ice worked
 lib/canopy.js      woods: conifer spires and broadleaf cauliflower
-lib/river.js       routing between ports, and carving to the 12 -> 2 profile
+lib/river.js       least-cost routing over the ground, meanders, and carving
+lib/heap.js        a binary min-heap, for the flood and the route
 lib/tile.js        the ONE place metres become millimetres
 lib/mesh.js        height field -> closed solid, with a watertightness check
 lib/stl.js         binary STL, and the stacking plate
@@ -558,7 +608,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-78 checks. The ones that earn their keep:
+86 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -586,6 +636,12 @@ npm test
   unit test passed on a hand-built object
 - no tree crosses a seam; the rim is byte-identical after planting
 - a treeline is a world elevation, not a tile-local one
+- **a river follows the valley the glacier left** — the regression for a
+  router that never read the terrain
+- a river will not climb a ridge to save distance
+- a river meanders on a floodplain and stays put in a gorge
+- the carved bed hits the declared port heights at both ends, and never
+  rises along its length
 
 ## Status
 
@@ -599,7 +655,7 @@ fountain outlets and buffer chambers; the dog-bone key geometry; the drip
 tray; mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
 exists, nothing calls it); and a browser UI.
 
-Next, in the order asked for: **rivers**, then **fountains**.
+Next: **lakes and tarn basins**, then **fountains**.
 
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 `erosionK` are the levers.
