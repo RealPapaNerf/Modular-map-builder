@@ -440,12 +440,52 @@ at 16 mm a mature canopy.
 
 ```json
 "canopy": [
-  { "kind": "conifer",   "crownMM": 7,  "heightMM": 9, "spacingMM": 12,
-    "minZMM": 34, "maxZMM": 96, "maxSlopeDeg": 36 },
-  { "kind": "deciduous", "crownMM": 12, "heightMM": 7, "spacingMM": 16,
-    "maxZMM": 40, "maxSlopeDeg": 24 }
+  { "kind": "conifer",   "crownMM": 7,  "heightMM": 9, "density": 0.45,
+    "minZMM": 34, "maxZMM": 96, "thinningMM": 18, "maxSlopeDeg": 36 },
+  { "kind": "deciduous", "crownMM": 12, "heightMM": 7, "density": 0.35,
+    "maxZMM": 40, "thinningMM": 10, "maxSlopeDeg": 24 }
 ]
 ```
+
+### Density
+
+`density` is **the fraction of ground under canopy** — one number from bare to
+closed, meaning something you can see rather than a distance you have to work
+out from the crown size:
+
+| | |
+|---|---|
+| 0.05 | a few scattered trees |
+| 0.25 | open woodland, gaps everywhere |
+| 0.55 | proper wood, crowns nearly touching |
+| 1.0 | closed canopy, crowns overlapping |
+
+Spacing follows from it, so changing crown size does not silently undo it.
+Set `spacingMM` instead to drive it the other way round.
+
+The footprint it divides by is **measured, not assumed**. A cone fills its
+nominal circle give or take, but a lobed broadleaf crown has gaps between its
+lobes and covers only about 73% of one — so using πr² for both priced
+deciduous 27% too high and `density: 1` came out at 58% measured cover, which
+made the number in the spec file mean nothing in particular. It is now
+measured at runtime by stamping one tree and counting, because every shape
+parameter changes the answer and a constant calibrated once would drift the
+next time one was tuned.
+
+Above about 0.7 the crowns start landing on each other, so measured cover
+rises more slowly than asked. You cannot cover every square millimetre by
+scattering discs; `1.0` means a closed canopy, not literally 100%.
+
+To see the range rather than guess at it:
+
+```bash
+node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png
+```
+
+seven patches left to right from 0.05 to 1.0, with the measured cover of each
+printed. `thinningMM` makes a treeline a band rather than a line — the wood
+thins out over the last few mm instead of stopping dead, which is what the
+edge of a real one does.
 
 **Conifer** is a cone with a slightly convex spire and a few branch whorls
 stepped into the flank, because a plain cone reads as a traffic bollard. Plus
@@ -608,7 +648,7 @@ project and are **not** worked around here:
 npm test
 ```
 
-86 checks. The ones that earn their keep:
+93 checks. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -636,6 +676,10 @@ npm test
   unit test passed on a hand-built object
 - no tree crosses a seam; the rim is byte-identical after planting
 - a treeline is a world elevation, not a tile-local one
+- density is monotone, and means measured ground cover where crowns do not
+  pile up
+- a lobed crown does not fill its nominal circle and a cone roughly does —
+  the reason the footprint is measured rather than assumed
 - **a river follows the valley the glacier left** — the regression for a
   router that never read the terrain
 - a river will not climb a ridge to save distance

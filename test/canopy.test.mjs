@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeField, fill } from '../lib/field.js';
-import { scatterCanopy, crownHeight, placeTrees, CANOPY_DEFAULTS } from '../lib/canopy.js';
+import { scatterCanopy, crownHeight, placeTrees, crownFootprintMM2, spacingForDensity, CANOPY_DEFAULTS } from '../lib/canopy.js';
 
 const flatTile = (extent = 120, step = 0.5, z = 20) => {
   const n = Math.round(extent / step) + 1;
@@ -208,4 +208,97 @@ test('a treeline is a WORLD elevation, not a tile-local one', () => {
   const high = scatterCanopy(summit, { ...opts, baseMM: 60 });
   assert.ok(low.trees > 50, 'the valley is below the line and should be wooded');
   assert.equal(high.trees, 0, 'the same ground six plates up is above it and should be bare');
+});
+
+// ---------------------------------------------------------------------------
+// Density
+
+test('density is monotone — more of it means more wood', () => {
+  let lastTrees = -1;
+  let lastCover = -1;
+  for (const density of [0.05, 0.15, 0.3, 0.5, 0.7, 1.0]) {
+    const f = flatTile(200, 0.5, 20);
+    const r = scatterCanopy(f, { kind: 'conifer', crownMM: 10, heightMM: 8, density, seed: 5 });
+    assert.ok(r.trees > lastTrees, `density ${density} planted ${r.trees}, not more than ${lastTrees}`);
+    assert.ok(r.coverFraction > lastCover, `density ${density} covered ${r.coverFraction.toFixed(3)}`);
+    lastTrees = r.trees;
+    lastCover = r.coverFraction;
+  }
+});
+
+test('density means measured ground cover, near enough, where crowns do not pile up', () => {
+  // Calibrated against the real stamped footprint rather than pi*r^2. With
+  // the circle it was out by nearly half -- density 1 gave 58% cover -- and
+  // the number in the spec file meant nothing in particular.
+  for (const kind of ['conifer', 'deciduous']) {
+    for (const density of [0.15, 0.3, 0.5]) {
+      const f = flatTile(200, 0.5, 20);
+      const r = scatterCanopy(f, { kind, crownMM: 10, heightMM: 7, density, seed: 5 });
+      const err = Math.abs(r.coverFraction - density) / density;
+      assert.ok(err < 0.25,
+        `${kind} at density ${density} measured ${(100 * r.coverFraction).toFixed(0)}% cover`);
+    }
+  }
+});
+
+test('above about 0.7 the crowns overlap, so cover rises more slowly than asked', () => {
+  // Not a defect, and worth pinning so nobody "fixes" it: you cannot cover
+  // every square millimetre by scattering discs.
+  const f = flatTile(200, 0.5, 20);
+  const r = scatterCanopy(f, { kind: 'conifer', crownMM: 10, heightMM: 7, density: 1.0, seed: 5 });
+  assert.ok(r.coverFraction > 0.55, 'density 1 should still be a closed-looking canopy');
+  assert.ok(r.coverFraction < 0.95, 'but it cannot literally be 100%');
+});
+
+test('a lobed crown does not fill its nominal circle, and a cone roughly does', () => {
+  // This is the whole reason the footprint is measured rather than assumed.
+  // Assuming pi*r^2 for both prices the broadleaf crown about 27% too high,
+  // which is how density 1 came out at 58% measured cover.
+  const nominal = Math.PI * 5 * 5;
+  const cone = crownFootprintMM2({ ...CANOPY_DEFAULTS, kind: 'conifer', crownMM: 10, heightMM: 7 });
+  const leafy = crownFootprintMM2({ ...CANOPY_DEFAULTS, kind: 'deciduous', crownMM: 10, heightMM: 7 });
+  assert.ok(Math.abs(cone - nominal) / nominal < 0.15,
+    `a cone fills its circle, give or take: ${cone.toFixed(1)} against ${nominal.toFixed(1)}`);
+  assert.ok(leafy < nominal * 0.85,
+    `gaps between the lobes should cost it real area: ${leafy.toFixed(1)} against ${nominal.toFixed(1)}`);
+  assert.ok(leafy > nominal * 0.4, 'but it is still a crown, not a twig');
+});
+
+test('spacing follows from density and the measured footprint', () => {
+  const o = { ...CANOPY_DEFAULTS, kind: 'conifer', crownMM: 10, heightMM: 7, density: 0.25 };
+  const s = spacingForDensity(o);
+  // One crown per cell of side s, covering `density` of it.
+  assert.ok(Math.abs((crownFootprintMM2(o) / (s * s)) - 0.25) < 1e-6);
+  assert.ok(spacingForDensity({ ...o, density: 1.0 }) < s, 'denser means closer');
+});
+
+test('an explicit spacing overrides density', () => {
+  const f = flatTile(200, 0.5, 20);
+  const r = scatterCanopy(f, { kind: 'conifer', crownMM: 10, heightMM: 7, density: 1.0, spacingMM: 40, seed: 5 });
+  assert.equal(r.spacingMM, 40);
+  assert.ok(r.trees < 40, 'spacing of 40 mm on a 200 mm tile is a sparse stand whatever density says');
+});
+
+test('a treeline can be a band rather than a line', () => {
+  const n = 401;
+  const f = makeField(n, n, 0.5);
+  fill(f, (x) => 10 + x * 0.2); // 10 mm to 50 mm across the tile
+  const r = scatterCanopy(f, { kind: 'conifer', crownMM: 8, heightMM: 7, density: 0.5,
+                               seed: 3, maxZMM: 44, thinningMM: 12 });
+  assert.ok(r.reasons.thinned > 0, 'some trees should be thinned out, not just cut off');
+  // Count trunks in the band just below the line against well below it.
+  const band = (lo, hi) => {
+    let k = 0;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const g = 10 + i * 0.5 * 0.2;
+        if (g >= lo && g < hi && f.values[j * n + i] > g + 0.01) k++;
+      }
+    }
+    return k;
+  };
+  const low = band(20, 28);
+  const high = band(36, 44);
+  assert.ok(high > 0, 'the band just below the line should still have some trees');
+  assert.ok(high < low * 0.7, `and fewer than well below it: ${high} against ${low}`);
 });

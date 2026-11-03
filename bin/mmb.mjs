@@ -12,7 +12,9 @@ import { join } from 'node:path';
 import { buildMap } from '../lib/build.js';
 import { writeSTL, plateSTL } from '../lib/stl.js';
 import { makeContract, check, SIZES, SIZE_LADDER, FALLS, sizeFor } from '../lib/contract.js';
-import { renderMap } from '../lib/preview.js';
+import { renderMap, encodePNG } from '../lib/preview.js';
+import { scatterCanopy, spacingForDensity } from '../lib/canopy.js';
+import { makeField } from '../lib/field.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -46,8 +48,10 @@ const EXAMPLE = {
   // Woods. maxZMM is a treeline and it is the cheapest thing in the file
   // that makes a mountain read right; maxSlopeDeg keeps them off the cliffs.
   canopy: [
-    { kind: 'conifer', crownMM: 7, heightMM: 9, spacingMM: 12, minZMM: 34, maxZMM: 96, maxSlopeDeg: 36 },
-    { kind: 'deciduous', crownMM: 12, heightMM: 7, spacingMM: 16, maxZMM: 40, maxSlopeDeg: 24 },
+    { kind: 'conifer', crownMM: 7, heightMM: 9, density: 0.45,
+      minZMM: 34, maxZMM: 96, thinningMM: 18, maxSlopeDeg: 36 },
+    { kind: 'deciduous', crownMM: 12, heightMM: 7, density: 0.35,
+      maxZMM: 40, thinningMM: 10, maxSlopeDeg: 24 },
   ],
   contract: { tileMM: 200, plateMM: 10, outletZMM: 2, edgeLandMM: 18 },
 };
@@ -64,7 +68,49 @@ function describe(r) {
   return { lines, errs };
 }
 
-if (cmd === 'example') {
+if (cmd === 'canopy') {
+  // A contact sheet across the density range, because the only honest way
+  // to pick a number for how thick a wood looks is to look at it.
+  const kind = String(flag('kind', 'conifer'));
+  const crownMM = Number(flag('crown', 9));
+  const heightMM = Number(flag('height', crownMM * 1.1));
+  const out = String(flag('out', 'canopy.png'));
+  const steps = [0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 1.0];
+  const EXT = 70;
+  const STEP = Math.min(0.3, crownMM / 24);
+  const n = Math.round(EXT / STEP) + 1;
+  const GAP = 6;
+  const W = n * steps.length + GAP * (steps.length - 1);
+  const rgb = new Uint8Array(W * n * 3).fill(16);
+  let xoff = 0;
+  console.log(`${kind}, ${crownMM} mm crowns:`);
+  for (const density of steps) {
+    const f = makeField(n, n, STEP);
+    f.values.fill(10);
+    const r = scatterCanopy(f, { kind, crownMM, heightMM, density, seed: 11 });
+    let mx = 10;
+    for (const v of f.values) mx = Math.max(mx, v);
+    const at = (i, j) => f.values[Math.min(n - 1, Math.max(0, j)) * n + Math.min(n - 1, Math.max(0, i))];
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const gx = (at(i + 1, j) - at(i - 1, j)) / (2 * STEP);
+        const gy = (at(i, j + 1) - at(i, j - 1)) / (2 * STEP);
+        const sh = Math.max(0.06, (-gx * -0.55 + -gy * -0.55 + 0.63) / Math.hypot(-gx, -gy, 1));
+        const h = (f.values[j * n + i] - 10) / Math.max(1e-6, mx - 10);
+        const k = ((n - 1 - j) * W + xoff + i) * 3;
+        const g = 40 + h * 150;
+        rgb[k] = Math.min(255, g * 0.55 * sh * 1.9);
+        rgb[k + 1] = Math.min(255, g * 1.05 * sh * 1.9);
+        rgb[k + 2] = Math.min(255, g * 0.5 * sh * 1.9);
+      }
+    }
+    console.log(`  density ${String(density).padEnd(5)} spacing ${r.spacingMM.toFixed(1).padStart(5)} mm  ` +
+                `${String(r.trees).padStart(4)} trees  ${(100 * r.coverFraction).toFixed(0).padStart(3)}% cover`);
+    xoff += n + GAP;
+  }
+  writeFileSync(out, encodePNG(rgb, W, n));
+  console.log(`\n${out}: ${steps.length} patches, ${EXT} mm square, left to right in the order above.`);
+} else if (cmd === 'example') {
   process.stdout.write(JSON.stringify(EXAMPLE, null, 2) + '\n');
 } else if (cmd === 'plate') {
   const size = Number(flag('size', 200));
@@ -153,6 +199,7 @@ if (cmd === 'example') {
   node bin/mmb.mjs check map.json          contract, levels and seams, no rock
   node bin/mmb.mjs build map.json --out tiles/
   node bin/mmb.mjs plate --size 200 --thick 10 --out plate.stl
+  node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png
   (build also writes preview.png — a hillshade of the assembled map)
 
 River sizes: ${SIZE_LADDER.map((s) => `${s.id} ${s.widthMM}mm${s.kind === 'water-body' ? ' (opening)' : ''}`).join(', ')}
