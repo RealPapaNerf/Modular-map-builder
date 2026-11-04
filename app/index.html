@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modular map builder</title>
+<meta name="description" content="Build 3D-printable modular terrain tiles in the browser — rivers that run across the seams, plate levels that carry the gradient, STLs you can download.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <h1>Modular map builder</h1>
+    <p class="tag">Terrain tiles that mate with each other, with rivers that run across the seams. The whole generator runs here, in your browser &mdash; nothing is uploaded.</p>
+    <nav>
+      <a href="../">Documentation</a>
+      <a href="https://github.com/RealPapaNerf/Modular-map-builder">Source</a>
+    </nav>
+  </div>
+</header>
+
+<noscript><p class="banner err">This builds maps with JavaScript in your browser. With it off there is nothing to show.</p></noscript>
+<p class="banner err" id="unsupported" hidden></p>
+
+<main>
+  <!-- ---------------------------------------------------------------- spec -->
+  <section class="panel" id="spec-panel">
+    <h2>The map</h2>
+
+    <div class="quick">
+      <label>Seed
+        <span class="row">
+          <input type="number" id="q-seed" min="0" step="1">
+          <button type="button" id="q-dice" class="mini" title="A different map, same rules">Roll</button>
+        </span>
+      </label>
+      <label>Columns <input type="number" id="q-cols" min="1" max="8" step="1"></label>
+      <label>Rows <input type="number" id="q-rows" min="1" max="8" step="1"></label>
+      <label>Relief <span class="row"><input type="number" id="q-relief" min="5" max="200" step="1"><span class="unit">mm</span></span></label>
+      <label>Mesh
+        <select id="q-quality">
+          <option value="2.5">Draft &mdash; 2.5 mm</option>
+          <option value="0.9">Normal &mdash; 0.9 mm</option>
+          <option value="0.6">Fine &mdash; 0.6 mm</option>
+          <option value="" id="q-quality-custom" hidden>Custom</option>
+        </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="q-glacier"> Glaciate
+      </label>
+    </div>
+
+    <div class="row wrap reset-row">
+      <button type="button" id="load-example" class="mini">Reload example</button>
+    </div>
+
+    <details id="spec-details">
+      <summary>Spec JSON <span class="hint">everything the CLI reads</span></summary>
+      <textarea id="spec" spellcheck="false" rows="18" aria-label="Map spec as JSON"></textarea>
+      <p class="json-err" id="json-err" hidden></p>
+      <div class="row wrap">
+        <button type="button" id="format" class="mini">Reformat</button>
+        <button type="button" id="copy-spec" class="mini">Copy</button>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button type="button" id="check">Check</button>
+      <button type="button" id="build" class="primary">Build</button>
+      <button type="button" id="cancel" hidden class="danger">Cancel</button>
+      <span class="est" id="est"></span>
+    </div>
+
+    <p class="status" id="status" aria-live="polite"></p>
+  </section>
+
+  <!-- ------------------------------------------------------------- preview -->
+  <section class="panel" id="preview-panel" hidden>
+    <h2>Preview <span class="hint" id="preview-hint"></span></h2>
+    <div class="canvas-wrap">
+      <canvas id="canvas"></canvas>
+    </div>
+    <div class="row wrap">
+      <button type="button" id="dl-png" class="mini">Download preview.png</button>
+    </div>
+    <p class="hint">
+      Heights are world heights &mdash; each tile&rsquo;s surface plus its plate stack &mdash; so the
+      staircase shows. Light is from the north-west. Blue is water, the pale grid is the seams.
+    </p>
+  </section>
+
+  <!-- -------------------------------------------------------------- report -->
+  <section class="panel" id="report-panel" hidden>
+    <h2>Report</h2>
+    <div id="report"></div>
+  </section>
+
+  <!-- ----------------------------------------------------------- downloads -->
+  <section class="panel" id="dl-panel" hidden>
+    <h2>Print files</h2>
+    <p class="hint" id="dl-note"></p>
+    <div id="downloads"></div>
+  </section>
+</main>
+
+<footer>
+  <p>
+    MIT. The generator, the contract checks and the hillshade are the same
+    modules the <code>mmb</code> command-line tool runs &mdash; served straight from
+    <code>lib/</code> as ES modules, with no build step and no dependencies.
+  </p>
+</footer>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>

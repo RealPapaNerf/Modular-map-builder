@@ -7,6 +7,10 @@ rather than real places.
 
 No dependencies. Node 18 or newer and nothing else.
 
+**[Build one in your browser](https://realpapanerf.github.io/Modular-map-builder/app/)** — same
+generator, same contract checks, nothing to install and nothing uploaded. Or on the
+command line:
+
 ```bash
 node bin/mmb.mjs example > map.json
 node bin/mmb.mjs check map.json          # contract, plate levels and seams
@@ -936,16 +940,47 @@ npm test
 - the carved bed hits the declared port heights at both ends, and never
   rises along its length
 
+## In the browser
+
+[**realpapanerf.github.io/Modular-map-builder/app/**](https://realpapanerf.github.io/Modular-map-builder/app/)
+
+The app is the same `lib/` this repo's CLI imports, served as ES modules — no
+bundler, no build step, no copy of the generator that can drift from the one
+the tests cover. It edits a spec, runs `buildMap`, hillshades the result and
+hands back the same set of STLs `mmb build` writes, as files or one ZIP.
+
+Two things are worth knowing before you use it:
+
+**The build is the slow part, and it is real work.** A 3x3 map at the example's
+0.9 mm mesh is around fifteen seconds and a quarter of a million triangles. It
+runs in a web worker, so the page stays live and `Cancel` actually cancels, but
+start on the draft mesh: the contract, the plate levels, the seams and the keys
+are all identical at 2.5 mm, and it comes back in a few seconds. Only the
+printable surface changes. The app will warn you when the mesh is too coarse for
+the crowns you asked for, because at 2.5 mm a 7 mm conifer is under three cells
+across and prints as a lump.
+
+**Nothing leaves the machine.** There is no server to send a spec to; the whole
+generator is in the page.
+
+Running it locally needs a static server, not a `file://` open — ES modules are
+fetched, and the browser will refuse the fetch from the filesystem:
+
+```bash
+python3 -m http.server 8000     # from the repository root, then open /app/
+```
+
 ## Status
 
 Working and tested end to end: contract, plate levels, seam proofs, river
-routing and carving, tile cutting, watertight meshing, STL, preview.
+routing and carving, tile cutting, watertight meshing, STL, preview, and the
+browser app.
 
 Not built yet: keys between the **plates** (so a seam with a level change is
 registered by more than friction); a manifold, for feeding more than one
 spring from one pump; buffer chambers under a lid, which need rock over air;
-mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
-nothing calls it); and a browser UI.
+and mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
+nothing calls it).
 
 Next: **keying the plates to each other**, which is what the seven unkeyed
 seams on the example map are waiting for; then mesa stratigraphy wired into a
@@ -956,4 +991,4 @@ Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 
 ## Licence
 
-MIT.
+MIT. See [LICENSE](LICENSE).
