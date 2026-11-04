@@ -457,7 +457,8 @@ building the same bytes.
    tests for each row. The pond backing up through several tiles can wait
    for phase 4. *Done when* the example map can be drawn from an empty board
    without opening the JSON, and dragging one tile up a riser flips its
-   seams' badges live.
+   seams' badges live. **Built** — both checked in Chromium by
+   `test/browser.mjs`; what it had to decide on the way is in §11.
 2. **Grow.** The three.js viewer (relief's `viewer.js`, geography removed,
    `three.module.min.js` and `OrbitControls.js` vendored with licences)
    showing what `buildMap` returns today: each tile on its risers, water as
@@ -538,3 +539,74 @@ Still open:
    change.
 2. **How tall a stack?** Risers are a play-time choice, so the limit is a
    guide, not a rule: `maxStackPlates` stays and the board warns past it.
+
+## 11. Phase 1, as built
+
+Built 4 November 2026. Both *done when* conditions are checked by
+`npm run test:browser`, which draws the example from an empty board with the
+mouse and the inspector and compares the result with `lib/example.js` key for
+key, then drags B1 up a riser and reads B1/B2 as a dam before the pointer is
+released. `test/specops.test.mjs` draws the same example through the spec
+operations, in node.
+
+What exists:
+
+| piece | what it is |
+|---|---|
+| `lib/board.js` | `solveBoard` (placements, rotation, risers, springs → seams, ponds, the water's order), `describeBoard` (the §4.2 sentences), `boardFromSpec` (a map-style spec read as a board), `plan` (both, never throws) |
+| `app/` | the §6.1 layout: stage tabs, tools, palette and the board's tiles on the left, the canvas, the inspector, the status strip, the JSON drawer |
+| `app/specops.js` | every edit a tool makes, as a function of the spec, so the tools hold no document of their own and the edits are tested in node |
+| `mmb board` | the board's sentences and seam table from the command line — the first of phase 4's |
+
+Decisions the build had to take, because a map-style spec could not say what
+§6.2 assumed it could:
+
+1. **The board is the map's rectangle.** A map-style spec has no holes:
+   `completeGrid` fills `cols × rows`. So *place* adds a row or a column (ghost
+   cells round the board) and *Delete* takes an outer one off. A river through
+   a removed strip is cut, and each cut end becomes what it now is — an inlet
+   from off the map, or a drain — keeping the width the board read there.
+   Holes, and the palette holding designs, arrive with `designs`/`board` in
+   phase 5.
+2. **A riser is the design's `levels`** in a map-style spec, not a loose
+   block: the corner lattice and any dam reservoir are cut for it, so it
+   changes the print. A level the river would choose anyway is not written
+   down. In phase 5 risers become `board.place[].riserMM`, which is play.
+3. **A turn is play: `rot: {"col,row": quarterTurns}`.** It does not change
+   what is printed, so `buildMap` ignores it; `plan`, the hillshade under the
+   board and `mmb board` read it. A turned tile shows its design's north as
+   an arrow, and the tile view shows it as designed, unturned, because that is
+   the frame its lakes and woods are written in.
+4. **The corner toggle is `cornerRaise: {"cc,rr": mm}`.** Map-style corners
+   come from one shared lattice, so a corner of one tile is a corner of up to
+   four, and raising it raises them all — every seam still mates, which a
+   build test checks. `cornerLattice` takes the raise, and also a null world
+   (flat ground, corners at their floor) so the board can plan before anything
+   is grown. Per-design corners from the class ladder are phase 5.
+5. **A wood's shape is `canopy[].region`** in the tile's millimetres, with
+   `tiles` naming the tile. `scatterCanopy` rejects a trunk outside it, so the
+   density inside the line is still the density the number says.
+6. **Ridge, volcano and flat are on the board as well as in a tile.** In a
+   map-style spec they are world features — the example's spine crosses three
+   tiles — so they are drawn in board millimetres and stored as the fractions
+   the generator reads. Growing the board keeps them over the same tiles.
+7. **The fall picker is 10–50.** §6.2 still said 0; §10 decided there is no
+   level tile.
+8. **Seam kinds beyond §4.2's table**, because the arrangements reach them:
+   `spills` (an outlet above lower land pours onto it), `head-on` (two
+   outlets facing; the higher falls into the lower's channel, level ones go
+   nowhere), `spring` (a fed open inlet), and `cliff`/`plane` for land.
+   `backs up` is a flag on the tile, said in a sentence, not yet a merged pond.
+9. **Rims before anything is grown.** The board needs rims for *holds* and
+   *overtops*, and in a map-style spec they come from the world. A second
+   worker grows the ground without its ice (≈0.1 s) whenever the fields it
+   depends on change, and the board reads the lattice from that; once the map
+   is grown, the grown bed replaces it. For the example the two lattices are
+   identical, because the lattice is quantised to the plate. With neither,
+   corners sit at their floor, which only errs toward overtopping. The status
+   strip says which it is.
+
+Left for later, as planned: the 3D viewer and per-tile height arrays across
+the worker boundary (phase 2), brushes and `lib/edits.js` (phase 3), merged
+ponds and the full `mmb board` (phase 4), designs, the window and the lip
+(phase 5).

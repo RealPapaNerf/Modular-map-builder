@@ -332,3 +332,29 @@ test('a treeline can be a band rather than a line', () => {
   assert.ok(high > 0, 'the band just below the line should still have some trees');
   assert.ok(high < low * 0.7, `and fewer than well below it: ${high} against ${low}`);
 });
+
+test('a wood drawn as a shape stops at its line', () => {
+  const f = flatTile(120, 0.5, 20);
+  const region = [[20, 20], [70, 20], [70, 60], [20, 60]];
+  const r = scatterCanopy(f, { crownMM: 8, heightMM: 6, density: 0.6, seed: 5, region });
+  assert.ok(r.trees > 5, `planted ${r.trees}`);
+  assert.ok(r.reasons.mask > 0, 'and turned some away');
+  // Nothing grows further outside the line than a crown reaches.
+  const reach = 8 * 0.6 + 1;
+  for (let j = 0; j < f.ny; j++) {
+    for (let i = 0; i < f.nx; i++) {
+      const x = i * f.step;
+      const y = j * f.step;
+      const outside = x < 20 - reach || x > 70 + reach || y < 20 - reach || y > 60 + reach;
+      if (outside) assert.equal(f.values[j * f.nx + i], 20, `canopy at ${x},${y}, outside the wood`);
+    }
+  }
+});
+
+test('a region round the whole tile plants exactly what no region does', () => {
+  const a = flatTile();
+  const b = flatTile();
+  scatterCanopy(a, { crownMM: 9, heightMM: 7, density: 0.5, seed: 9 });
+  scatterCanopy(b, { crownMM: 9, heightMM: 7, density: 0.5, seed: 9, region: [[-1, -1], [200, -1], [200, 200], [-1, 200]] });
+  assert.deepEqual(Array.from(a.values), Array.from(b.values));
+});

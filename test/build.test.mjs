@@ -168,3 +168,15 @@ test('usableKeys counts only the pairs with a recess cut on both sides', async (
   }
   assert.ok(usable.length <= r.keys.length, 'cannot be more usable than planned');
 });
+
+test('a raised corner lifts the four tiles round it and every one still meets its contract', () => {
+  const plain = buildMap(SPEC);
+  const raised = buildMap({ ...SPEC, cornerRaise: { '1,1': 10 } });
+  assert.equal(raised.corners.get('1,1'), plain.corners.get('1,1') + 10);
+  assert.equal(raised.corners.get('2,1'), plain.corners.get('2,1'), 'only the corner asked for');
+  for (const t of raised.tiles) {
+    assert.ok(t.edges.worst < 1e-6, `${t.label} is ${t.edges.worst.toFixed(4)} mm off its contract`);
+    assert.ok(t.mesh.watertight, `${t.label} leaks`);
+  }
+  for (const s of raised.seamChecks) assert.ok(s.flush, `${s.from} ${s.edge} no longer mates: ${s.kind}`);
+});

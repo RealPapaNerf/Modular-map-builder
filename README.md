@@ -848,8 +848,12 @@ lib/mesh.js        height field -> closed solid, with bores and a watertightness
 lib/stl.js         binary STL, and the stacking plate
 lib/preview.js     hillshaded PNG of the assembled map
 lib/build.js       spec in, printable tiles out
+lib/board.js       what the water does on a board: seam kinds, ponds, sentences
 bin/mmb.mjs        command line
-test/              41 checks
+app/               the editor: main.js holds the state, board.js and tilecanvas.js
+                   draw, tools.js and inspector.js edit, specops.js is every edit
+                   as a function of the spec, worker.js grows
+test/              node --test, plus browser.mjs for the editor in Chromium
 ```
 
 ## Where this meets relief
@@ -878,9 +882,10 @@ project and are **not** worked around here:
 
 ```bash
 npm test
+npm run test:browser      # the editor in Chromium; needs Playwright, skips without it
 ```
 
-131 checks. The ones that earn their keep:
+180 checks, and 16 steps in the browser. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -939,32 +944,138 @@ npm test
 - a river meanders on a floodplain and stays put in a gorge
 - the carved bed hits the declared port heights at both ends, and never
   rises along its length
+- every row of the blueprint's seam table, as a test: one riser lower
+  **flows**, two is a **10 mm waterfall**, level is a **10 mm dam** a 20 mm rim
+  holds and a 10 mm rim overtops, and a ring at one level is a chain of dams,
+  not an error
+- a turned tile's four edge signatures are the design's, turned
+- **the example can be drawn from an empty board with the tools alone** —
+  in node through the spec operations, and in Chromium with the mouse, with
+  the JSON never opened
+- dragging B1 up one riser flips its seam with B2 from a flow to a dam
+  **while the pointer is still down**
+- the example builds the same bytes with the three new spec fields absent
 
 ## In the browser
 
 [**realpapanerf.github.io/Modular-map-builder/app/**](https://realpapanerf.github.io/Modular-map-builder/app/)
 
-The app is the same `lib/` this repo's CLI imports, served as ES modules — no
-bundler, no build step, no copy of the generator that can drift from the one
-the tests cover. It edits a spec, runs `buildMap`, hillshades the result and
-hands back the same set of STLs `mmb build` writes, as files or one ZIP.
+An editor you draw the map in, built on the same `lib/` the CLI imports and
+served as ES modules — no bundler, no build step, no copy of the generator that
+can drift from the one the tests cover. Four stages over one spec:
 
-Two things are worth knowing before you use it:
+| stage | what it does |
+|---|---|
+| **Draw** | the board in 2D, and any one tile close up. Every tool writes the spec |
+| **Grow** | runs the generator in a worker; the hillshade then lies under the board |
+| **Refine** | brushes and handles on the grown ground — phase 3 of the [blueprint](docs/water-table-blueprint.md), not built yet |
+| **Print** | the report and the STLs, as files or one ZIP, exactly what `mmb build` writes |
 
-**The build is the slow part, and it is real work.** A 3x3 map at the example's
+### The board says what the water does
+
+Every change re-reads the spec as a board and follows the water through it
+(`lib/board.js`, well under a millisecond), so each seam carries a badge and the
+status strip says what will happen, in sentences: *"B3 falls 20 mm into B2."
+"B2 meets B1 10 mm higher, so B2 ponds to 26 mm and runs on into B1; its rim
+holds at 40 mm."* Drag a tile up a riser and the badges change while you drag.
+
+| badge | the seam |
+|---|---|
+| blue dot, arrow | the river runs across |
+| `↓20` | a waterfall, and how far it falls |
+| red `dam ≈26` | the tile upstream is dammed and fills to 26 mm, which its rim holds |
+| dashed `overtops` | it would have to fill higher than its own rim, so it runs over the rim into the tray instead |
+| red `bank ≈30` | the river runs into land, and the tile fills until it gets over |
+| amber `↘12` | the river pours down onto lower ground |
+| purple `⇄` | two rivers sent at each other |
+| `tray` | it drains off the board, into the tray |
+| teal ring | a spring: where the pump's water comes up |
+| grey hollow | a dry bed or a dry inlet — nothing feeds it, which is fine |
+| amber `⋔` beside one | wide into narrow: the channel takes what it can and the rest spreads over the banks |
+| `cliff 30` | the land steps at the seam |
+
+Heights in the sentences are on the table: the riser under a tile plus the
+tile's own height. **The board predicts and never refuses** — putting the
+pieces together wrong is a way to play. Whether the map can be *built* is a
+different question, and the inspector says that separately.
+
+Rims depend on the ground, so until something is grown they come from the
+ground *without its ice*, worked out in a second worker in about a tenth of a
+second. The corner lattice is quantised to the plate, so the ice rarely moves a
+corner; once the map is grown, the grown bed replaces the estimate. A pond that
+rises past its own inlet is flagged as backing up into the tile behind; how far
+it goes is phase 4.
+
+### The tools
+
+| on the board | | | in a tile (double-click it) | |
+|---|---|---|---|---|
+| Select `V` | inspect, drag ridge points and volcanoes, pan | | Corner `C` | raise a corner a plate |
+| Place `P` | add a row or a column | | Lake `K` | a lake at a point |
+| Turn `T`, or `R` over a tile | a quarter turn | | Spring `S` | a spring at a point |
+| Risers `H` | drag a tile up or down, or paint a height | | Wood `G` | a wood drawn as a shape |
+| River `W` | drag across tiles | | Ridge, Volcano, Flat | as on the board |
+| Fall `F` | a tile's fall, 10–50 mm | | | |
+| Spring `S`, Drain `D` | on a river's open end | | | |
+| Ridge `I`, Volcano `O`, Flat `L` | the ground | | | |
+
+A river stroke that starts off the board comes in from that side; one that
+finishes off it drains there; one that ends on another river joins it, and
+drawing back over a tile rubs the loop out. The line says which tiles and which
+sides — the channel itself is still routed down the valley when it grows.
+`Shift` snaps to 10 mm, `Delete` removes what is selected, `Esc` steps back,
+`Ctrl+Z` undoes a whole drag at once. The inspector shows what is selected and
+nothing else; with nothing selected, that is the map itself.
+
+The JSON is in a drawer and stays the document: every tool writes it, it shows
+which keys the last edit changed, and anything typed into it is read straight
+back. The spec is kept in the browser between visits, and `Save`/`Open` move it
+as a file.
+
+### What a map-style spec can say, and the three things added for it
+
+This is phase 1 of the [water table](docs/water-table-blueprint.md), so the
+editor writes the spec the generator reads today, where every tile is its own
+design, generated in place. That fixes three things about the board: it is a
+rectangle (tiles come and go a row or a column at a time, and a river through
+a removed strip is cut, coming in from or draining off the new edge); a tile's
+riser is part of its design (`levels`), because the corners and any dam
+reservoir are cut for it; and a design cannot move to another cell.
+
+Three spec fields are new, all optional, and the example builds the same bytes
+without them:
+
+```json
+{
+  "rot": { "1,1": 1 },
+  "cornerRaise": { "2,2": 10 },
+  "canopy": [{ "kind": "conifer", "tiles": ["B2"], "region": [[20, 20], [90, 20], [60, 90]] }]
+}
+```
+
+| field | what it says |
+|---|---|
+| `rot` | how a piece sits on the table, in quarter turns clockwise, by tile |
+| `cornerRaise` | lift one corner of the lattice by so many mm. Keyed like tiles, from the south-west — `"2,2"` is B2's north-east corner — and shared, so the four tiles round it rise together and still mate |
+| `canopy[].region` | a wood drawn as a shape, in the millimetres of the tile `tiles` names. Trees stand only inside the line |
+
+A turn does not change what is printed — it is the piece on the table — so the
+build ignores it and the board does not. `mmb board map.json` prints what the
+board says, turns and all.
+
+### Running it
+
+**Growing is the slow part, and it is real work.** A 3x3 map at the example's
 0.9 mm mesh is around fifteen seconds and a quarter of a million triangles. It
 runs in a web worker, so the page stays live and `Cancel` actually cancels, but
 start on the draft mesh: the contract, the plate levels, the seams and the keys
-are all identical at 2.5 mm, and it comes back in a few seconds. Only the
-printable surface changes. The app will warn you when the mesh is too coarse for
-the crowns you asked for, because at 2.5 mm a 7 mm conifer is under three cells
-across and prints as a lump.
+are all identical at 2.5 mm, and it comes back in a few seconds.
 
 **Nothing leaves the machine.** There is no server to send a spec to; the whole
 generator is in the page.
 
-Running it locally needs a static server, not a `file://` open — ES modules are
-fetched, and the browser will refuse the fetch from the filesystem:
+Locally it needs a static server, not a `file://` open — ES modules are fetched,
+and the browser will refuse the fetch from the filesystem:
 
 ```bash
 python3 -m http.server 8000     # from the repository root, then open /app/
@@ -974,7 +1085,8 @@ python3 -m http.server 8000     # from the repository root, then open /app/
 
 Working and tested end to end: contract, plate levels, seam proofs, river
 routing and carving, tile cutting, watertight meshing, STL, preview, and the
-browser app.
+editor's Draw stage with the board that says what the water does (phase 1 of
+the [water table](docs/water-table-blueprint.md)).
 
 Not built yet: keys between the **plates** (so a seam with a level change is
 registered by more than friction); a manifold, for feeding more than one
@@ -989,7 +1101,8 @@ fluvial pass.
 Where this is going: a **set** of interchangeable tiles for a water table,
 any piece next to any piece, with a board that says what the water will do and
 an editor you draw in. The design is in
-[`docs/water-table-blueprint.md`](docs/water-table-blueprint.md).
+[`docs/water-table-blueprint.md`](docs/water-table-blueprint.md); phase 1, the
+editor shell and Draw, is built, and phase 2 puts Grow in 3D.
 
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 `erosionK` are the levers.
