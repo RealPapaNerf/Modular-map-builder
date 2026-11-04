@@ -979,8 +979,25 @@ browser app.
 Not built yet: keys between the **plates** (so a seam with a level change is
 registered by more than friction); a manifold, for feeding more than one
 spring from one pump; buffer chambers under a lid, which need rock over air;
-and mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
-nothing calls it).
+mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
+nothing calls it); and **sediment deposition** — the ice erodes but never
+puts anything down, so there are no moraines and none of the lakes a moraine
+would dam.
+
+Designed, not built. Three specs in `docs/`, written to be picked up whole in
+a later session:
+
+- [**A staged pipeline**](docs/spec-pipeline.md) — so a build can be stopped,
+  looked at, edited and resumed, instead of running end to end on every
+  change. The ice is two thirds of the cost of a build and nothing downstream
+  of it touches the bed, so caching it makes editing the water nearly free.
+- [**Moraines, and telling the ice where to go**](docs/spec-glacier-deposition.md)
+  — till transport and deposition, plus a mask for where the snow collects and
+  a line for where the snout stops. `fillHollows` already floods any closed
+  basin, so a moraine ridge produces a lake with no new lake code.
+- [**A drawing editor**](docs/spec-editor.md) — a plan view of the map you
+  draw the spine, the ice and the rivers onto, with the plate levels shown
+  live as you draw, replacing the JSON panel.
 
 Next: **keying the plates to each other**, which is what the seven unkeyed
 seams on the example map are waiting for; then mesa stratigraphy wired into a
