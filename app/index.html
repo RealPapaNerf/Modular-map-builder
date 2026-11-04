@@ -6,6 +6,10 @@
 <title>Modular map builder</title>
 <meta name="description" content="Draw a board of 3D-printable terrain tiles, see what the water does at every seam, grow it, and print it. Everything runs in your browser.">
 <link rel="stylesheet" href="./style.css">
+<!-- three.js is vendored, as relief does it: the 3D view imports the bare name. -->
+<script type="importmap">
+  { "imports": { "three": "../lib/vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
 <noscript><p class="banner err">This editor runs in JavaScript in your browser. With it off there is nothing to show.</p></noscript>
@@ -42,8 +46,14 @@
     <div class="crumbs" id="crumbs"></div>
     <div class="canvas-host" id="canvas-host">
       <canvas id="canvas" tabindex="0" aria-label="The board. Use the tools on the left; the inspector on the right shows what is selected."></canvas>
+      <canvas id="view3d" tabindex="0" aria-label="The grown map in 3D. Drag to orbit, right-drag to pan, scroll to zoom; click a tile or a badge to inspect it."></canvas>
+      <canvas id="overlay3d" aria-hidden="true"></canvas>
       <div class="tip" id="tip" role="tooltip" hidden></div>
       <div class="view-ctl">
+        <span class="seg view-mode" id="view-mode" role="group" aria-label="View" hidden>
+          <button type="button" data-view="2d" aria-pressed="false" title="The board, flat, with the hillshade under it">Board</button>
+          <button type="button" data-view="3d" aria-pressed="true" title="The grown map in 3D">3D</button>
+        </span>
         <button type="button" id="zoom-in" class="icon" aria-label="Zoom in" title="Zoom in">+</button>
         <button type="button" id="zoom-out" class="icon" aria-label="Zoom out" title="Zoom out">&minus;</button>
         <button type="button" id="zoom-fit" aria-label="Fit to view" title="Fit (0)">Fit</button>

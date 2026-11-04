@@ -278,11 +278,20 @@ p.hint { margin: 8px 0 0; }
 .crumbs:empty { display: none; }
 .crumbs .here { font-weight: 600; font-family: var(--mono); }
 .canvas-host { position: relative; flex: 1; min-height: 0; }
-#canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+#canvas, #view3d, #overlay3d { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+/* One of the two views at a time: the board canvas, or the 3D one with the
+   badges drawn on a canvas over it that the pointer goes straight through. */
+#overlay3d { pointer-events: none; }
+.app:not([data-three="on"]) #view3d, .app:not([data-three="on"]) #overlay3d { display: none; }
+.app[data-three="on"] #canvas { display: none; }
 .view-ctl {
-  position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; z-index: 2;
+  position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; z-index: 2; align-items: center;
 }
 .view-ctl button { background: color-mix(in srgb, var(--panel) 92%, transparent); }
+.view-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin-right: 4px; }
+.view-mode button { border: 0; border-radius: 0; padding: 3px 10px; font-size: 0.8rem; }
+.view-mode button + button { border-left: 1px solid var(--line); }
+.view-mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .readout {
   position: absolute; left: 12px; bottom: 10px; z-index: 2;
   font: 0.76rem var(--mono); color: var(--dim);

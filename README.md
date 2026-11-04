@@ -852,7 +852,9 @@ lib/board.js       what the water does on a board: seam kinds, ponds, sentences
 bin/mmb.mjs        command line
 app/               the editor: main.js holds the state, board.js and tilecanvas.js
                    draw, tools.js and inspector.js edit, specops.js is every edit
-                   as a function of the spec, worker.js grows
+                   as a function of the spec, worker.js grows, viewer.js stands
+                   the grown map up in 3D from heights.js's arrays
+lib/vendor/        three.js r169 and OrbitControls, as relief vendors them, MIT
 test/              node --test, plus browser.mjs for the editor in Chromium
 ```
 
@@ -885,7 +887,7 @@ npm test
 npm run test:browser      # the editor in Chromium; needs Playwright, skips without it
 ```
 
-190 checks, and 16 steps in the browser. The ones that earn their keep:
+201 checks, and 23 steps in the browser. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -955,6 +957,15 @@ npm run test:browser      # the editor in Chromium; needs Playwright, skips with
 - dragging B1 up one riser flips its seam with B2 from a flow to a dam
   **while the pointer is still down**
 - the example builds the same bytes with the three new spec fields absent
+- **a draft build is on screen in 3D** well under a second after the
+  heights land, each tile's heights crossing from the worker as one
+  Float32Array
+- **orbiting is smooth** — every frame of a drag timed, and the view drawing
+  nothing once it has stopped; held even on a software renderer
+- a river runs in its channel only where the board says the water reaches,
+  a pond fills everything under its level, and a lake keeps its own surface
+- `R` over a tile in 3D turns it, the badges follow, and nothing is grown
+  again
 
 ## In the browser
 
@@ -967,7 +978,7 @@ can drift from the one the tests cover. Four stages over one spec:
 | stage | what it does |
 |---|---|
 | **Draw** | the board in 2D, and any one tile close up. Every tool writes the spec |
-| **Grow** | runs the generator in a worker; the hillshade then lies under the board |
+| **Grow** | runs the generator in a worker, then stands the grown map up in 3D: each tile on its risers, turned the way it sits, with the water where the board says |
 | **Refine** | brushes and handles on the grown ground — phase 3 of the [blueprint](docs/water-table-blueprint.md), not built yet |
 | **Print** | the report and the STLs, as files or one ZIP, exactly what `mmb build` writes |
 
@@ -1064,13 +1075,42 @@ A turn does not change what is printed — it is the piece on the table — so t
 build ignores it and the board does not. `mmb board map.json` prints what the
 board says, turns and all.
 
+### The grown map in 3D
+
+Once a map is grown, Grow shows it in 3D (`app/viewer.js`, three.js): each tile
+on its stack of plates, turned the way it sits on the table, a line round the
+top of every piece where the seams are, and the board's badges floating over
+the seams — the same badges, drawn by the same code, as on the 2D board.
+
+The water is the board's. A lake, a tarn, a bay or a spring pool is held by the
+print, so it is always there, at its own surface. A river channel only has
+water in it if the board says the water reaches that tile, and a tile the board
+says ponds is under water to the level it ponds to — so a dam *shows* as a
+flooded tile before anything is printed. A turn is play, so `R` over a tile
+turns it in 3D and the water and the badges follow at once, without growing
+anything again.
+
+Drag to orbit, right-drag to pan, scroll to zoom, double-click a tile to go to
+it. A click selects a tile or a seam for the inspector; hovering a badge says
+its sentence. `Board` and `3D` swap between the two views, and the hillshade
+still lies under the board in Draw. Change the spec after growing and the 3D
+view keeps showing what was grown, says so, and still answers turns.
+
+three.js is fetched the first time Grow is opened, never while drawing. The
+view draws only when something changes. On a machine drawing WebGL without a
+GPU (a virtual machine, a blocklisted driver), it goes into a quick mode while
+the camera moves — half the pixels and a quarter of the ground's triangles —
+and draws one full frame when it stops.
+
 ### Running it
 
 **Growing is the slow part, and it is real work.** A 3x3 map at the example's
 0.9 mm mesh is around fifteen seconds and a quarter of a million triangles. It
 runs in a web worker, so the page stays live and `Cancel` actually cancels, but
 start on the draft mesh: the contract, the plate levels, the seams and the keys
-are all identical at 2.5 mm, and it comes back in a few seconds.
+are all identical at 2.5 mm. The example still takes about ten seconds there,
+because most of it is the ice, which costs the same at any mesh; `Check` skips
+the ice and comes back in a second or two.
 
 **Nothing leaves the machine.** There is no server to send a spec to; the whole
 generator is in the page.
@@ -1085,9 +1125,10 @@ python3 -m http.server 8000     # from the repository root, then open /app/
 ## Status
 
 Working and tested end to end: contract, plate levels, seam proofs, river
-routing and carving, tile cutting, watertight meshing, STL, preview, and the
-editor's Draw stage with the board that says what the water does (phase 1 of
-the [water table](docs/water-table-blueprint.md)).
+routing and carving, tile cutting, watertight meshing, STL, preview, the
+editor's Draw stage with the board that says what the water does, and the
+grown map in 3D (phases 1 and 2 of the
+[water table](docs/water-table-blueprint.md)).
 
 Not built yet: keys between the **plates** (so a seam with a level change is
 registered by more than friction); a manifold, for feeding more than one
@@ -1095,15 +1136,17 @@ spring from one pump; buffer chambers under a lid, which need rock over air;
 and mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
 nothing calls it).
 
-Next: **keying the plates to each other**, which is what the seven unkeyed
-seams on the example map are waiting for; then mesa stratigraphy wired into a
-fluvial pass.
+Next: **phase 3 of the water table**, Refine — brushes and handles on the 3D
+view writing `edits` into the spec, replayed by a first `lib/edits.js`. Keying
+the plates to each other, which the seven unkeyed seams on the example map are
+waiting for, is now phase 5's keyed riser blocks; mesa stratigraphy wired into
+a fluvial pass is still waiting for its turn.
 
 Where this is going: a **set** of interchangeable tiles for a water table,
 any piece next to any piece, with a board that says what the water will do and
 an editor you draw in. The design is in
 [`docs/water-table-blueprint.md`](docs/water-table-blueprint.md); phase 1, the
-editor shell and Draw, is built, and phase 2 puts Grow in 3D.
+editor shell and Draw, and phase 2, the grown map in 3D, are built.
 
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 `erosionK` are the levers.

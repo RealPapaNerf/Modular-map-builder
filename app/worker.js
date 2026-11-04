@@ -11,6 +11,10 @@
 // rims before anything has been grown -- the corner lattice is quantised to
 // the plate, so the ice rarely moves a corner, and the grown bed replaces
 // the estimate as soon as there is one.
+//
+// After every build the builder also sends `heights`: each tile's ground,
+// standing water and cell kinds as typed arrays, TRANSFERRED rather than
+// copied, which is all the 3D view needs. The meshes stay here.
 
 import { buildMap, buildWorld } from '../lib/build.js';
 import { worldKey } from '../lib/board.js';
@@ -22,6 +26,7 @@ import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
 import { summarise } from './summary.js';
 import { makeZip } from './zip.js';
+import { tileHeights, transferables } from './heights.js';
 
 let result = null;
 let spec = null;
@@ -159,6 +164,16 @@ self.onmessage = async (ev) => {
         worldKey: worldKey(runSpec, { ice: true }),
         id: msg.id ?? null,
       }, [rgb.buffer, world.values.buffer]);
+
+      // The ground for the 3D view: one Float32Array of heights per tile,
+      // plus its water and what each cell is, handed over without a copy.
+      const tiles = result.tiles.map(tileHeights);
+      post({
+        type: 'heights',
+        id: msg.id ?? null,
+        contract: { tileMM: result.contract.tileMM, plateMM: result.contract.plateMM },
+        tiles,
+      }, tiles.flatMap(transferables));
       return;
     }
 

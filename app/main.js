@@ -3,8 +3,12 @@
 // change, and everything on screen is drawn from that plan.
 //
 // Four stages over one spec: Draw it on the board and in a tile; Grow it
-// (the generator, in a worker); Refine it (phase 3); Print it. Nothing leaves
-// the machine.
+// (the generator, in a worker) and look at it in 3D; Refine it (phase 3);
+// Print it. Nothing leaves the machine.
+//
+// The 3D view (viewer.js, three.js) is loaded the first time Grow is opened,
+// so drawing never waits for it. It shows what was grown, standing the way
+// the board says it stands now: a turn is play and does not need a regrow.
 
 import { EXAMPLE_SPEC } from '../lib/example.js';
 import { plan as planBoard, worldKey } from '../lib/board.js';
@@ -25,6 +29,7 @@ const el = {
   counts: $('counts'), say: $('say'), rims: $('rims'), sayAll: $('say-all'), sentences: $('sentences'),
   jsonToggle: $('json-toggle'), drawer: $('drawer'), spec: $('spec'), jsonErr: $('json-err'), jsonChanged: $('json-changed'),
   name: $('map-name'), unsupported: $('unsupported'), openFile: $('open-file'),
+  view3d: $('view3d'), overlay3d: $('overlay3d'), viewMode: $('view-mode'),
 };
 const ctx = el.canvas.getContext('2d');
 const STORE = 'mmb.spec.v1';
@@ -44,6 +49,7 @@ const state = {
   gesture: null,
   world: null,
   grown: null,
+  prefer3d: true,
   busy: null,
   history: [],
   hIndex: -1,
@@ -280,6 +286,10 @@ function onBuild(msg) {
     state.grown = {
       image: img, cells, report: msg.report, files: msg.files, elapsedMS: msg.elapsedMS, mode: msg.report.mode,
       printKey: printKey(specAt), stale: false, filesGone: false,
+      // What the 3D view needs to say what the water does on THESE tiles,
+      // whatever the spec has become since: the spec they were grown from,
+      // and the ground they were cut out of. The heights follow.
+      id: msg.id, spec: specAt, world: msg.world, tiles3d: null,
     };
     if (msg.report.mode !== 'check') state.world = { field: msg.world, key: worldKey(specAt), iceKey: msg.worldKey, source: 'grown' };
     state.busy = null;
@@ -287,6 +297,12 @@ function onBuild(msg) {
     const errs = msg.report.errors.length;
     say(`${msg.report.mode === 'check' ? 'Checked' : 'Grown'} in ${(msg.elapsedMS / 1000).toFixed(1)}s${errs ? ` — ${errs} error${errs > 1 ? 's' : ''} in the contract` : ''}.`, errs ? 'err' : 'ok');
     invalidate('all');
+    return;
+  }
+  if (msg.type === 'heights') {
+    if (!state.grown || state.grown.id !== msg.id) return;
+    state.grown.tiles3d = { contract: msg.contract, tiles: msg.tiles, at: performance.now() };
+    invalidate('canvas', 'stage', 'left');
     return;
   }
   if (msg.type === 'file') {
@@ -319,6 +335,83 @@ function estimateSeconds(s, mode) {
   const cells = cols * rows * ((T / meshMM) + 1) ** 2;
   const cycles = mode === 'check' || s.glacier === false ? 0 : (s.glacier?.cycles ?? 30);
   return (0.2 + cells * 1.57e-5 + cycles * 0.25) * 1.15;
+}
+
+/* --------------------------------------------------------------------- 3D */
+
+let viewer = null;
+let viewerModule = null;
+let viewerFailed = null;
+let viewerPending = false;
+
+/** three.js and the viewer, fetched once, the first time anybody might need them. */
+function loadViewer() {
+  viewerModule = viewerModule || import('./viewer.js');
+  return viewerModule;
+}
+
+function ensureViewer() {
+  if (viewer || viewerFailed || viewerPending) return;
+  viewerPending = true;
+  loadViewer()
+    .then((mod) => {
+      viewer = mod.createViewer({ canvas: el.view3d, overlay: el.overlay3d, theme: state.theme, onHover: hover3d, onPick: pick3d });
+    })
+    .catch((e) => {
+      viewerFailed = (e && e.message) || String(e);
+      say(`No 3D view in this browser (${viewerFailed}). The grown map is the hillshade under the board.`, 'warn');
+    })
+    .finally(() => { viewerPending = false; invalidate('canvas', 'stage', 'left'); });
+}
+
+/** There is a grown map to stand up, in a stage that shows it, and nothing has said no. */
+const can3d = () => (state.stage === 'grow' || state.stage === 'refine') && state.view.mode === 'board'
+  && !!state.grown?.tiles3d && !viewerFailed;
+const show3d = () => can3d() && state.prefer3d;
+
+let plan3dMemo = null;
+/**
+ * What the board says about the GROWN tiles. While the spec is still the one
+ * they were grown from that is simply the plan; once it has moved on, it is
+ * the plan of the spec as grown, turned the way the tiles are turned now --
+ * so the water drawn is always the water on the pieces drawn.
+ */
+function plan3d() {
+  const g = state.grown;
+  if (!g.stale) return state.plan;
+  const key = JSON.stringify(state.spec.rot || {});
+  if (plan3dMemo?.g !== g || plan3dMemo.key !== key) {
+    plan3dMemo = { g, key, plan: planBoard({ ...g.spec, rot: state.spec.rot }, { world: g.world }) };
+  }
+  return plan3dMemo.plan;
+}
+
+function sync3d() {
+  if (!viewer) { ensureViewer(); return; }
+  const g = state.grown;
+  if (viewer.payload() !== g.tiles3d) viewer.setTiles(g.tiles3d);
+  viewer.setBoard(plan3d(), { selection: state.selection, hover: state.hover });
+}
+
+function hover3d(hit, px, py, dragging) {
+  const key = JSON.stringify([hit?.kind, hit?.id]);
+  if (key !== state.hoverKey) {
+    state.hover = hit;
+    state.hoverKey = key;
+    invalidate('canvas', 'status');
+  } else if (hit) {
+    state.hover = hit; // the same thing, at a new point: keep the point for the readout
+  }
+  if (dragging || !hit) { el.tip.hidden = true; el.readout.textContent = ''; return; }
+  showTip({ px, py }, hit, plan3d());
+  el.readout.textContent = hit.kind === 'tile'
+    ? `${hit.label}  ${hit.z.toFixed(1)} mm up  ·  x ${hit.localX.toFixed(0)}  y ${hit.localY.toFixed(0)} in the tile`
+    : '';
+}
+
+function pick3d(hit) {
+  if (!hit) { select(null); return; }
+  select(hit.kind === 'seam' ? { type: 'seam', id: hit.id } : { type: 'tile', col: hit.col, row: hit.row });
 }
 
 /* ------------------------------------------------------------------- api */
@@ -420,12 +513,26 @@ function renderStage() {
     note.className = 'hint';
     note.textContent = rot ? 'shown as designed; it is turned on the board' : 'tile millimetres, north up';
     el.crumbs.append(back, here, note);
-  } else if (state.grown?.stale && state.stage !== 'print') {
-    const s = document.createElement('span');
-    s.className = 'hint';
-    s.textContent = 'The hillshade is from before the last change. Grow again to see the new ground.';
-    el.crumbs.append(s);
+  } else if (state.stage !== 'print') {
+    const three = show3d();
+    const text = state.grown?.stale
+      ? (three ? 'The 3D view is from before the last change, turned the way the tiles are turned now. Grow again to see the new ground.'
+        : 'The hillshade is from before the last change. Grow again to see the new ground.')
+      : three ? (window.matchMedia?.('(pointer: coarse)').matches
+        ? 'Drag to orbit, two fingers to pan and zoom; tap a tile or a badge to inspect it.'
+        : 'Drag to orbit, right-drag to pan, scroll to zoom. Double-click a tile to go to it; R turns the one under the pointer.')
+        : state.stage === 'grow' && !state.grown && !state.busy ? 'Nothing grown yet. Grow stands the map up here in 3D.'
+          : null;
+    if (text) {
+      const s = document.createElement('span');
+      s.className = 'hint';
+      s.textContent = text;
+      el.crumbs.append(s);
+    }
   }
+  // Board or 3D, once there is something grown to stand up.
+  el.viewMode.hidden = !can3d();
+  for (const b of el.viewMode.querySelectorAll('button')) b.setAttribute('aria-pressed', String((b.dataset.view === '3d') === state.prefer3d));
 }
 
 function fitCanvas() {
@@ -441,7 +548,14 @@ function fitCanvas() {
 }
 
 function drawCanvas() {
+  const three = show3d();
+  if (el.app.dataset.three !== (three ? 'on' : 'off')) {
+    el.app.dataset.three = three ? 'on' : 'off';
+    el.tip.hidden = true;
+    el.readout.textContent = '';
+  }
   if (state.stage === 'print') return;
+  if (three) { sync3d(); return; }
   const { w, h } = fitCanvas();
   const v = state.view;
   const box = v.mode === 'tile' ? tileBox(state.spec, v.tile.col, v.tile.row) : boardBox(state.spec, state.plan);
@@ -557,7 +671,9 @@ function growLeft() {
       ].map(([k, v]) => h('li', {}, h('span', {}, k), h('span', {}, v)))),
       g.stale ? h('p', { class: 'warn-line' }, 'The spec has changed since. Grow again to see it.') : null,
       h('button', { type: 'button', onclick: () => setStage('print') }, 'Report and files →')) : null,
-    h('p', { class: 'hint' }, 'Phase 2 puts the grown map in 3D. Until then the hillshade lies under the board, each tile turned the way it sits.'),
+    g && !b ? h('p', { class: 'hint' }, viewerFailed
+      ? 'This browser could not start WebGL, so there is no 3D view: the hillshade lies under the board instead, each tile turned the way it sits.'
+      : 'In the middle, in 3D: each tile on its risers and turned the way it sits, the water where the board says it goes, and what every seam does floating over it. Turning a tile is play, so the view follows without growing again.') : null,
   ];
 }
 
@@ -818,18 +934,32 @@ el.canvas.addEventListener('wheel', (ev) => {
 }, { passive: false });
 
 function zoomBy(f) {
+  if (show3d()) { viewer?.zoomBy(f); return; }
   if (!state.cam) return;
   const z = Math.max(0.3, Math.min(14, state.view.zoom * f));
   state.view = zoomAbout(state.cam, state.cam.width / 2, state.cam.height / 2, z, state.view);
   invalidate('canvas');
 }
+function zoomFit() {
+  if (show3d()) { viewer?.reframe(); return; }
+  state.view = { ...state.view, zoom: 1, panX: 0, panY: 0 };
+  invalidate('canvas');
+}
 $('zoom-in').addEventListener('click', () => zoomBy(1.25));
 $('zoom-out').addEventListener('click', () => zoomBy(0.8));
-$('zoom-fit').addEventListener('click', () => { state.view = { ...state.view, zoom: 1, panX: 0, panY: 0 }; invalidate('canvas'); });
+$('zoom-fit').addEventListener('click', zoomFit);
+el.viewMode.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-view]');
+  if (!b) return;
+  state.prefer3d = b.dataset.view === '3d';
+  state.hover = null;
+  state.hoverKey = null;
+  el.tip.hidden = true;
+  invalidate('canvas', 'stage');
+});
 
-function showTip(e, hov) {
+function showTip(e, hov, p = state.plan) {
   let text = null;
-  const p = state.plan;
   if (hov?.kind === 'seam') {
     const said = p.sentences.filter((x) => x.seam === hov.id).map((x) => x.text);
     const sm = p.seams.find((x) => x.id === hov.id);
@@ -922,9 +1052,11 @@ window.addEventListener('keydown', (ev) => {
   }
   if (ev.key === 'Enter' && state.gesture?.finish) { state.gesture.finish(); return; }
   if (ev.key === 'Delete' || ev.key === 'Backspace') { if (state.stage === 'draw') { ev.preventDefault(); deleteSelection(); } return; }
-  if (ev.key === '0') { state.view = { ...state.view, zoom: 1, panX: 0, panY: 0 }; invalidate('canvas'); return; }
+  if (ev.key === '0') { zoomFit(); return; }
   if (ev.key === '+' || ev.key === '=') { zoomBy(1.25); return; }
   if (ev.key === '-') { zoomBy(0.8); return; }
+  // A turn is play, so it works on the grown map too: nothing has to be grown again.
+  if ((ev.key === 'r' || ev.key === 'R') && show3d()) { turnUnderPointer(ev.shiftKey); return; }
   if (state.stage !== 'draw') return;
   if (ev.key === 'r' || ev.key === 'R') { turnUnderPointer(ev.shiftKey); return; }
   const list = state.view.mode === 'tile' ? TILE_TOOLS : BOARD_TOOLS;
@@ -939,6 +1071,11 @@ function setStage(stage) {
   if (state.gesture?.cancel) state.gesture.cancel();
   state.gesture = null;
   state.stage = stage;
+  state.hover = null;
+  state.hoverKey = null;
+  el.tip.hidden = true;
+  // Fetch three.js while the map grows, so the 3D view is ready when it lands.
+  if ((stage === 'grow' || stage === 'refine') && workersOK) loadViewer().catch(() => {});
   invalidate('all');
 }
 for (const b of document.querySelectorAll('.stages button')) b.addEventListener('click', () => setStage(b.dataset.stage));
@@ -1001,7 +1138,11 @@ if (location.protocol === 'file:') {
   el.unsupported.hidden = false;
 }
 
-window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => { state.theme = readTheme(); invalidate('canvas'); });
+window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+  state.theme = readTheme();
+  viewer?.setTheme(state.theme);
+  invalidate('canvas');
+});
 new ResizeObserver(() => invalidate('canvas')).observe(el.host);
 setInterval(() => { if (state.busy) invalidate('left'); }, 250);
 
@@ -1013,4 +1154,4 @@ wantWorld();
 invalidate('all');
 
 // For the browser test and for poking at it from the console.
-window.mmb = { state, api, ops, undo, redo, grow, setStage, openTile, closeTile, setTool };
+window.mmb = { state, api, ops, undo, redo, grow, setStage, openTile, closeTile, setTool, viewer: () => viewer, show3d };

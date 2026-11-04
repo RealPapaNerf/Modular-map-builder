@@ -466,7 +466,8 @@ building the same bytes.
    seams. Heights cross the worker boundary as one transferred
    `Float32Array` per tile. The hillshade stays as the board canvas's
    background. *Done when* a draft-mesh build is on screen in 3D within a
-   few seconds and orbiting it is smooth.
+   few seconds and orbiting it is smooth. **Built** — both checked in
+   Chromium by `test/browser.mjs`; what it measured and decided is in §12.
 3. **Refine, as a shell.** The brush and handle tools on the 3D view
    writing `edits` ops into the spec, with undo, the rim lock drawn — and the
    ops **replayed by a first `lib/edits.js`** inside today's `buildMap`,
@@ -615,3 +616,86 @@ Left for later, as planned: the 3D viewer and per-tile height arrays across
 the worker boundary (phase 2), brushes and `lib/edits.js` (phase 3), merged
 ponds and the full `mmb board` (phase 4), designs, the window and the lip
 (phase 5).
+
+## 12. Phase 2, as built
+
+Built 4 November 2026. Both *done when* conditions are checked by
+`npm run test:browser`, which grows the example at the draft mesh, times it
+onto the screen, then orbits it with the mouse and times every frame.
+`test/heights.test.mjs` covers the arrays the view is made of, in node.
+
+What exists:
+
+| piece | what it is |
+|---|---|
+| `app/heights.js` | pure: a built tile as transferable arrays (`tileHeights`), where the water stands once the board has had its say (`waterSurface`), and the vertex, normal, colour and index arrays of the ground, the walls, the rim and the water |
+| `app/viewer.js` | relief's viewer with the geography taken out: render on change, z-up tipped to y-up, the board's badges on a 2D canvas laid over it, picking, a quick mode for slow machines |
+| `lib/vendor/` | three.js r169 and `OrbitControls.js`, copied from relief with the licence, mapped by an import map in `app/index.html` |
+| `app/worker.js` | after every build, a `heights` message: per tile one `Float32Array` of heights, one of standing water and one byte per cell saying what it is, all transferred |
+| `app/main.js` | Grow and Refine show the 3D view once something is grown; `Board`/`3D` swap it for the 2D board |
+
+What it measured, in Chromium's software renderer (the test machine has no
+GPU), on the example at 2.5 mm:
+
+- **On screen in 3D 0.3–0.4 s after the heights land.** The build before it
+  is 8–10 s, and 8 s of that is the ice, which runs on the 128-cell world
+  whatever the mesh. The 3D view's share is held under 2.5 s by the test;
+  the build's is reported and is phase 6's to cut, by caching the world.
+- **Orbiting: a median 30 ms a frame (34 fps), 90% within 36 ms,** with
+  0.6 ms of script in each. A full-quality software frame is 136 ms with
+  multisampling and 58 ms without, so that is quick mode, below. A GPU draws
+  the nine draft tiles in a millisecond or two and never needs it.
+
+Decisions the build had to take:
+
+1. **The view shows what was grown, standing the way the board says now.**
+   A turn is play (§11, decision 3), so `R` over a tile in 3D turns it, the
+   board is solved again and the water and badges follow, and nothing is
+   grown. Once the spec has moved on, the view keeps the grown tiles and
+   solves the board for *the spec they were grown from*, with today's turns,
+   so the water drawn is always the water on the pieces drawn, and the crumbs
+   say it is out of date.
+2. **Standing water is the tile's; running water is the board's.** A lake, a
+   tarn, a bay, a dam's reservoir or a spring pool is held by the print, so it
+   is always drawn, flat at its own surface. A channel has water in it only if
+   the board says water reaches the tile, drawn 3 mm over its bed (half the
+   bank's freeboard). A tile the board says ponds is under water everywhere
+   below the level it ponds to, so a dam shows as a flooded tile. The surface
+   is grown one vertex past the wet cells and the ground hides what it covers,
+   which is what puts the shoreline exactly where the water meets the land.
+3. **Two outputs added to `lib/`, neither changing a byte of any tile.**
+   `fillHollows` gives each tarn its own cells as `wet`, the way `placeLake`
+   already did for a placed lake, because the union cannot say which surface a
+   cell is under. `scatterCanopy` returns the `mask` of cells under crowns,
+   because once the canopy is added to the ground nothing can tell them
+   apart, and the view colours woods as woods. The example builds the same
+   bytes, at its own mesh and at draft.
+4. **The geometry is built from the heights, not from the STL.** One vertex
+   per sample, normals from the height field so neighbouring cells agree,
+   colours from the hillshade's bands so the board and the 3D view are one
+   map. The walls come down to the piece's bottom; the bottom is not drawn.
+   Risers are drawn as the plates they are, one block each, pale, with a gap
+   between, so a stack reads as parts under a tile and not as more tile.
+5. **Badges are the board's own.** `drawBadge` draws them onto a canvas over
+   the WebGL one, at a point a little above the higher side of the seam, with
+   the arrow turned to wherever the camera is. Hovering one says its sentence,
+   clicking it selects the seam; clicking a tile selects it, through a coarse
+   copy of its surface on a layer the camera never draws.
+6. **three.js loads when Grow is first opened.** Drawing never fetches it.
+   Opening Grow starts the fetch, so it is there when the build lands. A
+   browser that cannot start WebGL keeps the hillshade under the board and
+   says why.
+7. **Quick mode.** While the camera moves, a frame interval over 45 ms
+   halves the pixel ratio and draws the ground from every other row and
+   column, which is a second draw range in the same index buffer. One full
+   frame is drawn once the camera stops. A software renderer also does without
+   multisampling, which is more than half its frame.
+8. **Render on change means a visible change.** The camera counts as moved
+   when it has moved a quarter of a pixel since the frame on screen, whoever
+   moved it, and the glide after letting go is short (damping 0.16). The tail
+   of a glide stops being drawn when it stops being visible, about a second
+   after letting go even in software, and nothing is drawn after that.
+
+Left for later: an ungrown board in 3D (until something is grown, Grow shows
+the 2D board and says so), the tray and shadows, and a worker pool. The
+brushes on this view are phase 3.

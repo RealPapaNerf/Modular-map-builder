@@ -76,14 +76,24 @@ export function badgeStyle(s, th) {
   }
 }
 
-/** Which way the water goes across a seam, as a screen-space unit vector. */
-function flowDir(s) {
+/** Which way the water goes across a seam, in board mm (north is +y): out of `a` by its edge, or in, for a spring. */
+export function flowOnBoard(s) {
   const [dx, dy] = STEP[s.edge];
-  if (s.kind === 'spring') return { x: -dx, y: dy };
-  return { x: dx, y: -dy };
+  return s.kind === 'spring' ? { x: -dx, y: -dy } : { x: dx, y: dy };
 }
 
-function drawBadge(ctx, s, x, y, th, ring) {
+/** The same, as a screen-space unit vector on the board canvas, whose y runs down. */
+function flowDir(s) {
+  const d = flowOnBoard(s);
+  return { x: d.x, y: -d.y };
+}
+
+/**
+ * One seam's badge, centred on (x, y) in screen px. `dir` is which way the
+ * water crosses, on screen; the board works it out from the seam, and the 3D
+ * view, whose camera can face any way, passes its own.
+ */
+export function drawBadge(ctx, s, x, y, th, ring, dir = null) {
   const st = badgeStyle(s, th);
   if (!st) return null;
   let rect;
@@ -95,7 +105,7 @@ function drawBadge(ctx, s, x, y, th, ring) {
     ctx.fill();
     if (st.stroke) { ctx.lineWidth = 1.5; ctx.strokeStyle = st.stroke; ctx.stroke(); }
     if (st.shape === 'dot') {
-      const d = flowDir(s);
+      const d = dir || flowDir(s);
       ctx.strokeStyle = st.ink; ctx.fillStyle = st.ink; ctx.lineWidth = 1.8;
       ctx.beginPath(); ctx.moveTo(x - d.x * 4.5, y - d.y * 4.5); ctx.lineTo(x + d.x * 2, y + d.y * 2); ctx.stroke();
       arrowHead(ctx, x + d.x * 5, y + d.y * 5, d.x, d.y, 4);
@@ -112,7 +122,7 @@ function drawBadge(ctx, s, x, y, th, ring) {
   } else {
     rect = pill(ctx, x, y, st.text, st);
     if (st.arrow) {
-      const d = flowDir(s);
+      const d = dir || flowDir(s);
       ctx.fillStyle = st.fill === th.panel ? th.dry : st.fill;
       arrowHead(ctx, x + d.x * (rect.w / 2 + 6), y + d.y * (rect.h / 2 + 6), d.x, d.y, 5);
     }

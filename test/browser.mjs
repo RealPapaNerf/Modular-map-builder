@@ -10,6 +10,19 @@
 // Plus the rest of the Draw stage once each: a turn, the tile view's lake,
 // spring, wood and corner tools, undo, and no errors in the console.
 //
+// Then phase 2's, on the 3D view in Grow:
+//
+//   3. A draft-mesh build is on screen in 3D within a few seconds: the 3D
+//      view's own part, from the heights landing to the first frame, is
+//      timed and held to it; the build before it is reported, because most
+//      of it is the ice, which phase 6 caches.
+//   4. Orbiting it is smooth: a drag of a second and a half, every frame's
+//      interval measured, and the view drawing nothing once it has stopped.
+//
+// Plus: three.js is not fetched until Grow is opened, the water is where the
+// board says it is, R turns a tile in 3D without growing again, a badge
+// says its sentence and selects its seam, and an out-of-date view says so.
+//
 // Needs Playwright (`npm install playwright`, anywhere on the path); set
 // CHROMIUM_PATH to use a Chromium that is already installed. Skips, and says
 // so, when Playwright is not there.
@@ -300,6 +313,152 @@ await step('the tile view writes a lake, a spring, a wood and a corner raise int
   assert.deepEqual(wood.region, [[20, 20], [90, 20], [90, 90], [20, 90]]);
   assert.deepEqual(s.cornerRaise, { '1,1': 10 });
   await page.keyboard.press('Escape');
+});
+
+/* ------------------------------------------------------------------ phase 2 */
+
+const stats = () => page.evaluate(() => window.mmb.viewer()?.stats() ?? null);
+const threeFetched = () => page.evaluate(() => performance.getEntriesByType('resource').some((r) => /three\.module\.min\.js$/.test(r.name)));
+const box3d = () => page.locator('#view3d').boundingBox();
+/** Screen position of a board point on the 3D view, at the height of the ground there (plus `lift`). */
+async function at3d(x, y, lift = 0) {
+  const b = await box3d();
+  const p = await page.evaluate(([x, y, lift]) => { const v = window.mmb.viewer(); return v.project(x, y, v.heightAt(x, y) + lift); }, [x, y, lift]);
+  return { x: b.x + p.x, y: b.y + p.y };
+}
+
+await step('three.js is not fetched while drawing; Grow fetches it, and says nothing is grown yet', async () => {
+  assert.equal(await threeFetched(), false, 'Draw never needed it');
+  await page.click('#example');
+  await page.click('.stages button[data-stage="grow"]');
+  await page.waitForFunction(() => performance.getEntriesByType('resource').some((r) => /three\.module\.min\.js$/.test(r.name)));
+  assert.match(await page.locator('#crumbs').innerText(), /Nothing grown yet/);
+  assert.equal(await page.locator('#canvas').isVisible(), true, 'the board stays until there is something to stand up');
+  assert.equal(await page.locator('#view3d').isVisible(), false);
+});
+
+await step('DONE WHEN: a draft-mesh build is on screen in 3D within a few seconds', async () => {
+  await page.click('.chips button >> text="Draft 2.5"');
+  assert.equal((await spec()).meshMM, 2.5);
+  const t0 = await page.evaluate(() => performance.now());
+  await page.click('#grow-go');
+  await page.waitForFunction(() => window.mmb.state.grown?.tiles3d, null, { timeout: 240000 });
+  await page.waitForFunction(() => window.mmb.viewer()?.stats().firstFrameAt, null, { timeout: 30000 });
+  const t = await page.evaluate(() => ({ landed: window.mmb.state.grown.tiles3d.at, worker: window.mmb.state.grown.elapsedMS, frame: window.mmb.viewer().stats().firstFrameAt }));
+  const view = t.frame - t.landed;
+  console.log(`    grown in ${((t.landed - t0) / 1000).toFixed(1)} s (${(t.worker / 1000).toFixed(1)} s of it in the worker); in 3D ${Math.round(view)} ms after the heights landed`);
+  assert.ok(view < 2500, `the 3D view took ${Math.round(view)} ms after the build`);
+  assert.equal(await page.locator('#view3d').isVisible(), true);
+  assert.equal(await page.locator('#canvas').isVisible(), false);
+  const shape = await page.evaluate(() => window.mmb.state.grown.tiles3d.tiles.map((h) => ({ f32: h.heights instanceof Float32Array, n: h.heights.length, nx: h.nx })));
+  assert.equal(shape.length, 9);
+  assert.ok(shape.every((x) => x.f32 && x.nx === 81 && x.n === 81 * 81), 'one Float32Array of 81 x 81 heights per tile');
+  const st = await stats();
+  assert.equal(st.tiles, 9);
+  const seams = await page.evaluate(() => window.mmb.state.plan.seams.filter((s) => s.kind !== 'plane').map((s) => s.id).sort());
+  assert.deepEqual(st.badges.map((b) => b.id).sort(), seams, 'a badge over every seam that does something');
+});
+
+await step('the water is where the board says it is', async () => {
+  const st = await stats();
+  for (const label of ['B3', 'B2', 'B1', 'C2']) assert.ok(st.water[label] > 0, `${label}'s river runs`);
+  const dry = await page.evaluate(() => window.mmb.state.plan.tiles.filter((t) => !t.wet).map((t) => t.label));
+  assert.ok(dry.includes('A1') && !dry.includes('B2'), dry.join());
+});
+
+await step('DONE WHEN: orbiting it is smooth', async () => {
+  const b = await box3d();
+  const cx = b.x + b.width / 2;
+  const cy = b.y + b.height * 0.6;
+  const cam0 = (await stats()).camera;
+  await page.mouse.move(cx, cy);
+  const t0 = await page.evaluate(() => performance.now());
+  await page.mouse.down();
+  for (let i = 1; i <= 90; i++) {
+    await page.mouse.move(cx + 260 * Math.sin(i / 15), cy + 50 * Math.sin(i / 10));
+    await page.waitForTimeout(16);
+  }
+  await page.mouse.up();
+  const t1 = await page.evaluate(() => performance.now());
+  const st = await stats();
+  const during = st.frameTimes.filter((x) => x > t0 && x <= t1);
+  const gaps = during.slice(1).map((x, i) => x - during[i]).sort((p, q) => p - q);
+  const median = gaps[Math.floor(gaps.length / 2)];
+  const p90 = gaps[Math.floor(gaps.length * 0.9)];
+  const script = st.renderMS.slice(-during.length).sort((p, q) => p - q)[Math.floor(during.length / 2)];
+  console.log(`    ${during.length} frames in ${((t1 - t0) / 1000).toFixed(1)} s: ${median.toFixed(0)} ms apart (${Math.round(1000 / median)} fps), 90% within ${p90.toFixed(0)} ms, `
+    + `${script.toFixed(1)} ms of script each; ${st.software ? 'a software renderer, so the quick mode drew the moving frames' : 'on the GPU'}`);
+  assert.notDeepEqual(st.camera, cam0, 'the camera went round');
+  assert.ok(during.length >= 20, `only ${during.length} frames while orbiting`);
+  assert.ok(median <= 50, `frames ${median.toFixed(0)} ms apart while orbiting`);
+  assert.ok(script < 8, `${script.toFixed(1)} ms of script a frame`);
+  // Once it stops: the glide eases out, one full frame, and then nothing at all.
+  const released = await page.evaluate(() => performance.now());
+  await page.waitForFunction(() => !window.mmb.viewer().stats().quick, null, { timeout: 3000 });
+  const settled = await page.evaluate(() => performance.now());
+  const a = await stats();
+  await page.waitForTimeout(700);
+  const z = await stats();
+  console.log(`    back to the full view ${Math.round(settled - released)} ms after letting go`);
+  assert.equal(z.frames, a.frames, 'nothing is drawn while nothing changes');
+});
+
+await step('R over a tile in 3D turns it: play, so the board answers at once and nothing grows again', async () => {
+  await page.click('#zoom-fit');
+  await page.waitForTimeout(250);
+  const before = await stats();
+  const p = await at3d(300, 300);
+  await page.mouse.move(p.x, p.y);
+  await page.waitForFunction(() => window.mmb.state.hover?.label === 'B2');
+  await page.keyboard.press('r');
+  await page.waitForTimeout(250);
+  assert.deepEqual((await spec()).rot, { '1,1': 1 });
+  assert.equal(await page.evaluate(() => window.mmb.state.grown.stale), false, 'a turn changes nothing printed');
+  assert.equal(await page.evaluate(() => window.mmb.state.busy), null, 'and grows nothing');
+  const after = await stats();
+  assert.equal(after.turned.B2, 1);
+  assert.equal(await page.evaluate(() => window.mmb.state.plan.seams.find((s) => s.id === 'B2|N').kind), 'blocked', 'B3 now runs into a bank');
+  assert.ok(after.water.B1 < before.water.B1, 'B1\'s river has dried up');
+  assert.ok(after.water.B1 > 0, 'but its bay is still there');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(250);
+  assert.equal((await stats()).turned.B2, 0);
+  assert.equal((await stats()).water.B1, before.water.B1);
+});
+
+await step('a badge in 3D says its sentence, and a click on it selects its seam', async () => {
+  const badge = (await stats()).badges.find((x) => x.id === 'B2|N');
+  const b = await box3d();
+  await page.mouse.move(b.x + badge.x, b.y + badge.y);
+  await page.waitForFunction(() => window.mmb.state.hover?.kind === 'seam');
+  assert.match(await page.locator('#tip').innerText(), /B3 falls 20 mm into B2/);
+  await page.mouse.click(b.x + badge.x, b.y + badge.y);
+  await page.waitForTimeout(120);
+  assert.deepEqual(await page.evaluate(() => window.mmb.state.selection), { type: 'seam', id: 'B2|N' });
+  const t = await at3d(500, 300);
+  await page.mouse.click(t.x, t.y);
+  await page.waitForTimeout(120);
+  assert.deepEqual(await page.evaluate(() => window.mmb.state.selection), { type: 'tile', col: 2, row: 1 });
+  assert.match(await page.locator('#inspector').innerText(), /C2/);
+});
+
+await step('Board and 3D swap; an out-of-date 3D view says so and still shows what was grown', async () => {
+  await page.click('#view-mode button[data-view="2d"]');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#canvas').isVisible(), true);
+  assert.equal(await page.locator('#view3d').isVisible(), false);
+  await page.click('#view-mode button[data-view="3d"]');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#view3d').isVisible(), true);
+  await page.click('.stages button[data-stage="draw"]');
+  await nothingSelected();
+  await field('Seed', 8);
+  await page.click('.stages button[data-stage="grow"]');
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => window.mmb.state.grown.stale), true);
+  assert.match(await page.locator('#crumbs').innerText(), /from before the last change/);
+  assert.equal(await page.locator('#view3d').isVisible(), true);
+  assert.equal((await stats()).tiles, 9);
 });
 
 await step('nothing went to the console', async () => {
