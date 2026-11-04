@@ -7,3 +7,4 @@ tiles/
 _site/
 .jekyll-cache/
 .sass-cache/
+test/browser-failure.png

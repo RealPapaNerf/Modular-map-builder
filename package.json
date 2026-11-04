@@ -4,6 +4,6 @@
   "description": "Procedurally generated, 3D-printable modular terrain tiles with rivers that actually flow between them",
   "type": "module",
   "bin": { "mmb": "./bin/mmb.mjs" },
-  "scripts": { "test": "node --test test/*.test.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs", "test:browser": "node test/browser.mjs" },
   "license": "MIT"
 }

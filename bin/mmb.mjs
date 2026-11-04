@@ -5,6 +5,7 @@
 //   node bin/mmb.mjs check <spec.json>
 //   node bin/mmb.mjs plate --size 200 --thick 10 --out plate.stl
 //   node bin/mmb.mjs preview <spec.json> --out preview.png
+//   node bin/mmb.mjs board <spec.json>
 //   node bin/mmb.mjs example > map.json
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -19,6 +20,7 @@ import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
 import { EXAMPLE_SPEC } from '../lib/example.js';
+import { plan as planBoard } from '../lib/board.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -84,6 +86,28 @@ if (cmd === 'canopy') {
   console.log(`\n${out}: ${steps.length} patches, ${EXT} mm square, left to right in the order above.`);
 } else if (cmd === 'example') {
   process.stdout.write(JSON.stringify(EXAMPLE_SPEC, null, 2) + '\n');
+} else if (cmd === 'board') {
+  // What the water does on the board as the spec sets it out -- risers,
+  // turns and all -- in the sentences the editor's status strip uses. No
+  // rock is grown, so the rims are the land datum's, as the editor's are
+  // before anything has been grown; that only ever errs toward overtopping.
+  const specPath = args[1];
+  if (!specPath) { console.error('need a spec file; try: node bin/mmb.mjs example > map.json'); process.exit(2); }
+  const p = planBoard(JSON.parse(readFileSync(specPath, 'utf8')));
+  for (const s2 of p.sentences) console.log(`  ${s2.text}`);
+  const shown = p.seams.filter((s2) => s2.kind !== 'plane');
+  if (shown.length) {
+    console.log('\nSeams:');
+    for (const s2 of shown) {
+      const what = s2.kind === 'waterfall' || s2.kind === 'spills' ? `${s2.kind} ${Math.round(s2.dropMM)} mm`
+        : (s2.kind === 'dam' || s2.kind === 'blocked') ? `${s2.kind}, ${s2.holds === false ? `overtops at ${Math.round(s2.pondToMM)}` : `ponds to ${Math.round(s2.pondToMM ?? s2.sillMM)}`} mm`
+          : s2.kind === 'cliff' ? `cliff ${Math.round(Math.abs(s2.landStepMM))} mm`
+            : s2.backFrom ? `${s2.kind === 'spring' ? 'spring; ' : ''}${s2.backFrom} spills back out here` : s2.kind;
+      console.log(`  ${s2.tiles.join(' | ').padEnd(8)} ${what}${s2.spreads ? ', spreads' : ''}${s2.wet || s2.kind === 'dry' ? '' : ' (dry)'}`);
+    }
+  }
+  const counts = Object.entries(p.counts).filter(([, v]) => v).map(([k, v]) => `${v} ${k}`).join(', ');
+  console.log(`\n${p.placements.length} tiles on the board: ${counts || 'nothing to say'}.`);
 } else if (cmd === 'plate') {
   const size = Number(flag('size', 200));
   const thick = Number(flag('thick', 10));
@@ -255,6 +279,7 @@ if (cmd === 'canopy') {
 
   node bin/mmb.mjs example > map.json      a spec to start from
   node bin/mmb.mjs check map.json          contract, levels and seams, no rock
+  node bin/mmb.mjs board map.json          what the water does at every seam, as set out
   node bin/mmb.mjs build map.json --out tiles/
   node bin/mmb.mjs plate --size 200 --thick 10 --out plate.stl
   node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png

@@ -5,8 +5,15 @@
 // it here, keep the result here, and send the main thread only what it draws.
 // STLs are generated on demand and transferred, so the meshes are never
 // copied across unless somebody actually asks for a file.
+//
+// The editor runs two of these. One builds. The other answers `world`: the
+// ground without its ice, a tenth of a second, so the board can read real
+// rims before anything has been grown -- the corner lattice is quantised to
+// the plate, so the ice rarely moves a corner, and the grown bed replaces
+// the estimate as soon as there is one.
 
-import { buildMap } from '../lib/build.js';
+import { buildMap, buildWorld } from '../lib/build.js';
+import { worldKey } from '../lib/board.js';
 import { shadeMap } from '../lib/shade.js';
 import { writeSTL, plateSTL } from '../lib/stl.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
@@ -111,9 +118,21 @@ function find(id) {
   return f;
 }
 
+const fieldMsg = (f) => {
+  const values = new Float64Array(f.values);
+  return { nx: f.nx, ny: f.ny, step: f.step, originX: f.originX, originY: f.originY, values };
+};
+
 self.onmessage = async (ev) => {
   const msg = ev.data;
   try {
+    if (msg.type === 'world') {
+      const w = buildWorld({ ...msg.spec, glacier: false });
+      const field = fieldMsg(w.bed);
+      post({ type: 'world', key: msg.key ?? worldKey(msg.spec), field }, [field.values.buffer]);
+      return;
+    }
+
     if (msg.type === 'run') {
       spec = msg.spec;
       const t0 = Date.now();
@@ -128,13 +147,18 @@ self.onmessage = async (ev) => {
       const report = summarise(result, { mode: msg.mode, spec: runSpec });
       const files = manifest().map(({ id, name, group, note }) => ({ id, name, group, note }));
 
+      // The bed the tiles were cut from, so the board reads the rims they got.
+      const world = fieldMsg(result.world.bed);
       post({
         type: 'report',
         report,
         files,
         elapsedMS: Date.now() - t0,
-        preview: { rgb, width, height },
-      }, [rgb.buffer]);
+        preview: { rgb, width, height, pxPerTile: msg.pxPerTile || 170 },
+        world,
+        worldKey: worldKey(runSpec, { ice: true }),
+        id: msg.id ?? null,
+      }, [rgb.buffer, world.values.buffer]);
       return;
     }
 
