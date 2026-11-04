@@ -49,66 +49,132 @@ Everything below is `contract.js` growing, not being replaced. The invariant
 that every finished tile honours its declared rim to `< 1e-6 mm` stays; what
 changes is **which rims are allowed to be declared**.
 
-### 3.1 A tile is (height class, four edges, a rotation)
+### 3.1 A tile is (base class, four edges, a rotation), on loose plates
 
 ```
-tile design  = { id, height: 0|1|2|3, edges: {N,E,S,W}, fallMM, features... }
-edge         = land            land at the datum, rim corners both at +0
+tile design  = { id, base: 10|20|30|40|50, edges: {N,E,S,W}, fallMM, features... }
+edge         = land            land at the rim datum, both corners at +0
              | land+          a land edge one plate up at one or both corners (a ramp tile)
-             | in <size>      a river comes in, floor at outletZ + fallMM
-             | out <size>     a river goes out, floor at outletZ
+             | in <size>      a river comes in, floor at (rim - channelDepth) + fallMM
+             | out <size>     a river goes out, floor at rim - channelDepth
              | drain <size>   out, declared as falling into the tray
-placement    = { design, col, row, rot: 0|1|2|3 }
+placement    = { design, col, row, rot: 0|1|2|3, plates: 0..n }
 ```
 
-**Height class** replaces the solved plate level. A class-1 tile stands one
-plate (10 mm) above a class-0 tile, whether that plate is loose or printed
-into the tile (see §8). It is written on the piece, it is what "tall" and
-"short" mean in the brief, and it is the *only* thing that moves a tile up
-or down in the world.
+**Two heights, kept apart.** The **base class** is the thickness of the
+printed slab at the rim — 10, 20, 30, 40 or 50 mm — and it is part of the
+piece. It says how much material there is *below* the land datum, which is
+the budget for everything cut down into the tile: the channel, a lake, a
+fjord. The **plates** are loose 10 mm stacking plates under the piece, chosen
+at play time, and they move the whole tile up in the world. The rim's world
+height is
 
-**The land datum is one number.** Every land edge of every tile sits at
-`edgeLandMM` above that tile's own base, at both corners, unless the edge is
-explicitly a ramp. That is what makes a class-0 land edge mate with every
-other class-0 land edge, and it is the single biggest change from today, where
-`cornerLattice` reads the world. The tile's own ground still rises to whatever
-it likes inland — `conformToContract` adds a residual, it never flattens —
-so a mountain tile is a mountain that comes down to the datum at its rim, and
-the large-scale relief of the *board* comes from the height classes, as the
-brief describes it: mountains are tiles standing higher.
+```
+rimWorld = plates × plateMM + base
+```
+
+so a 50 mm fjord tile on no plates mates with a 10 mm summit tile on four
+plates, and a 30 mm river tile on two plates mates with either. That is the
+brief's *"a fjord has a 50 base; a summit has a 10 base with blocks
+underneath"*, and it is what lets any map interact with any other: the plates
+are the same part under every set.
+
+In the code this is almost free. The land datum is already
+`edgeLandMM`, measured from the tile's own base, which *is* the base class;
+it becomes a per-design number instead of a per-map one, and the four corners
+default to it as they do now. The plate level stops being solved from the
+river and becomes a number on the placement, with `assignLevels` kept as the
+checker that says what the designed layout needs.
+
+**The land datum is one number per class.** Every land edge of every tile
+sits at its base class above its own bottom, at both corners, unless the edge
+is explicitly a ramp. The tile's own ground still rises to whatever it likes
+inland — `conformToContract` adds a residual, it never flattens — so a mountain
+tile is a mountain that comes down to the datum at its rim, and a summit taller
+than 50 mm is simply a 10 mm slab with 60 mm of mountain on it. The
+large-scale relief of the *board* comes from plates and classes together, as
+the brief describes it: mountains are tiles standing higher.
 
 A **ramp tile** declares one or more corners at `+1 plate`. Its signature is
-different (`land 22/32`) and so is which neighbours it fits, and the catalogue
+different (`land 30/40`) and so is which neighbours it fits, and the catalogue
 says so. Most sets want two or three of them and no more.
 
-### 3.2 The port ladder gets a zero
+### 3.2 Ports are measured from the rim, and the ladder gets a zero
 
-Today `FALLS = [10..50]` and every river tile drops at least one plate across
-itself, which is what *forces* the downstream tile a plate lower. In a set,
-that is the wrong default: two class-0 river tiles side by side must flow.
+Today the port floors are measured from the tile's bottom (`outletZMM`, and
+`inletZMM = outletZMM + fallMM`). With five base classes that no longer
+works: a 20 mm tile and a 50 mm tile with the same `outletZMM` would put their
+channels 30 mm apart at the seam. So the channel is measured **down from the
+rim**:
 
-So `fallMM: 0` is allowed, and it is the **standard river tile**: inlet and
-outlet floors both at `outletZMM`. The flow across it is driven by the pump's
-head, as it is on any water table. Tiles with a fall of 10–50 mm become the
-*step* tiles — rapids, cascades — and they carry their own meaning: a fall-10
-tile's inlet is one plate up, so it wants a class-(n+1) tile upstream or it
-dams. That is not a fault in the set; it is a piece with a rule, and the board
-(§4) tells the child which.
+```
+outlet floor = rim - channelDepthMM           the same on every class
+inlet floor  = outlet floor + fallMM
+```
 
-> Decision to take with the first printed pair: whether the level tile should
-> carry a 2 mm bias (inlet 8, outlet 6) so a chain of them has a visible
-> direction. It costs a 2 mm pond at every same-class seam. Try both in water.
+and the base class only has to be able to *hold* it:
 
-The checks that go with it, all closed-form:
+```
+base ≥ channelDepthMM + floorMM               floorMM = 2, the plastic under the channel
+```
 
-- `edgeLandMM ≥ outletZMM + plateMM + bankAboveMM`, so a **one-plate dam ponds
-  and holds**: with the example's 6/22, a short tile backed against a tall one
-  fills to 16 mm and has 6 mm of freeboard. (`check()` today only requires the
-  land to clear the default inlet.)
-- A **two-plate dam overtops** at the rim and runs into the tray. Legal,
-  reported, and in a water table it is a feature.
-- The widest port plus banks still fits the tile; the levee rule in
-  `edgeProfile` is unchanged.
+**The 2 mm floor** is the brief's number and it stays: a 0 mm floor is a
+hole, and 2 mm is sturdy without wasting filament. (`check` will still say
+that 2 mm is about ten layers at 0.2 mm under standing water, and that the
+optional overlap seam needs 4 mm of plate to cut its shelf from. Both are
+notes; neither is a reason to change the number.)
+
+**`channelDepthMM` is 16, and that is not a free choice.** For a one-plate
+dam to pond and *hold* — the short tile fills, the child watches — the bank
+has to clear the pond by a freeboard:
+
+```
+channelDepthMM ≥ plateMM + bankAboveMM = 10 + 6 = 16
+```
+
+which is exactly the example's `22 − 6`. From that, with a 2 mm floor, a
+tile carrying a standard river needs an 18 mm slab, so:
+
+| base class | can carry |
+|---|---|
+| **10** | dry land: summits, meadows, ramps; tarns and pools to 8 mm deep. **No standard river.** |
+| **20** | rivers and level channels; lakes to 18 mm |
+| **30** | rivers; lakes to 28 mm; the reservoir behind a two-plate dam |
+| **40** | deep lakes to 38 mm |
+| **50** | fjords and bays, 48 mm of water below the rim |
+
+A design that asks for more than its class holds is refused with the class it
+needs — *"this lake is 32 mm deep; it needs a 40 mm base"* — rather than cut
+through the bottom. A shallower channel on a thinner slab is possible in
+principle (the levee rule already raises banks near a port), but a 10 mm
+meadow with 12 mm bunds along its creek is not a meadow, so the standard is
+16 and the 10 mm class is dry.
+
+**`fallMM: 0` is the standard river tile.** Today `FALLS = [10..50]` and every
+river tile drops at least one plate across itself, which is what *forces* the
+downstream tile a plate lower. In a set that is the wrong default: two
+same-height river tiles side by side must flow. A level tile has inlet and
+outlet at the same floor, and the pump's head moves the water, as on any
+water table. Tiles with a fall of 10–50 mm are the *step* pieces — rapids,
+cascades — and carry their own rule: a fall-10 tile's inlet is one plate up,
+so it wants a rim one plate higher upstream or it dams. That is a piece with
+a rule, not a fault, and the board (§4) tells the child which.
+
+> To settle with the first printed pair: whether a level tile should carry a
+> 2 mm bias (inlet 2 mm above outlet) so a chain of them has a visible
+> direction. The cost is a 2 mm step *up* at every seam between two level
+> tiles — a puddle before the water climbs over. Recommend 0, and water.
+
+The remaining checks, all closed-form: a **two-plate dam overtops** at the
+rim and runs into the tray (legal, reported, and in a water table a
+feature); the widest port plus banks still fits the tile; the levee rule in
+`edgeProfile` is unchanged. In world terms the flow rule becomes
+
+```
+10·(pA − pB) = baseB − baseA + fall_B
+```
+
+which is still whole plates because the classes are.
 
 ### 3.3 Rotation is free, and the code should say so
 
@@ -140,7 +206,7 @@ saying.
 ### 4.1 The model
 
 Each placed tile is one pool with a floor at its lowest port and a rim at its
-land datum, both in world mm (`height × plateMM + local`). Each outlet faces a
+land datum, both in world mm (`plates × plateMM + local`). Each outlet faces a
 **sill**:
 
 | what is across the seam | the sill |
@@ -261,7 +327,7 @@ as it is now: every tool writes the spec and reads it back.
 ### 6.2 Draw
 
 **The board canvas.** A grid of cells. Tools: *place* (drag a design from the
-palette; `R` rotates, `Delete` removes), *height* (paint 0–3 on a cell),
+palette; `R` rotates, `Delete` removes), *plates* (paint 0–n on a cell),
 *river* (drag a line across cells; it writes `rivers[].path` and the ports
 fall out, as `portsFromRivers` does now), *fall* (click a cell, pick 0/10/20/
 30/40/50), *spring* and *drain* (click an open port). Every mouse-up runs
@@ -298,7 +364,7 @@ WebGL does not notice nine of them.
 **The viewer** is relief's `viewer.js` with the geography taken out:
 `three.module.min.js` and `OrbitControls.js` vendored under `lib/vendor/` with
 their licences, as relief already does, z-up tipped to y-up, render on change
-only. Drawn: each tile at its height class on its plates, the water as a
+only. Drawn: each tile on its plates, the water as a
 translucent surface from the `wet` mask and the board's pond levels, trees as
 the field already has them, seams as thin lines, badges floating at the seams.
 The board's hydrology drives what the water looks like, so a dam *shows* as a
@@ -331,7 +397,7 @@ speed-up that the per-design split makes trivial.
 
 | file | change |
 |---|---|
-| `lib/contract.js` | `fallMM: 0` on the ladder; `check()` gains the freeboard rule; canonical catalogue signature; corner vocabulary {0, +1 plate} |
+| `lib/contract.js` | base class per design (`edgeLandMM` per tile); ports measured down from the rim; `fallMM: 0` on the ladder; `check()` gains the freeboard and the holds-its-channel rules; canonical catalogue signature; corner vocabulary {0, +1 plate} |
 | `lib/board.js` | **new**: placements, rotation, the hydrology fixed point, seam kinds, the catalogue count |
 | `lib/build.js` | split into `plan` / `grow` / `cut` / `refine` / `mesh` with caches; `cornerLattice` replaced by the set rule; `assignLevels` kept as the *designer's* checker, no longer the oracle |
 | `lib/edits.js` | **new**: the op list, the rim mask, replay |
@@ -347,26 +413,33 @@ The spec file grows two top-level keys and loses nothing:
 
 ```json
 { "contract": {...}, "world": {...},
-  "designs":  [ { "id": "ridge-3", "height": 1, "fallMM": 0, "edges": {...}, "world": {...}, "canopy": [...] } ],
-  "board":    { "cols": 4, "rows": 3, "place": [ { "design": "ridge-3", "col": 0, "row": 2, "rot": 1 } ] },
+  "designs":  [ { "id": "ridge-3", "base": 20, "fallMM": 0, "edges": {...}, "world": {...}, "canopy": [...] } ],
+  "board":    { "cols": 4, "rows": 3, "place": [ { "design": "ridge-3", "col": 0, "row": 2, "rot": 1, "plates": 2 } ] },
   "edits":    { "ridge-3": [ ... ] } }
 ```
 
 Today's `rivers` / `falls` / `waterfalls` / `levels` keep working as a
 **map-style** spec: it is read as a board whose designs are generated in
-place, with `assignLevels` supplying the height classes. The example map
+place, with `assignLevels` supplying the plate counts. The example map
 builds the same bytes as before, which is the regression that proves the
 refactor did not change the generator.
 
 ## 8. Physical decisions the brief raises
 
-**Height: plates or printed in?** Today a class-2 tile is a tile on two loose
-plates. For a map on a wall that is right; for a set a child shuffles, loose
-plates are parts to lose and a seam to wobble on. Offer `riser: 'integral'`
-(the tile prints with its plates as part of it, hollowed by the slicer) next
-to `riser: 'plates'`. Integral is heavier and slower to print; it is also the
-only version of a "tall tile" a four-year-old can pick up as one thing.
-Recommend integral for the set, plates for development.
+**Risers are loose plates — decided.** The base class is printed into the
+piece; the plates under it are the same 200 × 200 × 10 part under every set,
+which is what lets any map interact with any other. The consequence is that
+**keying the plates to each other, and the tile to its top plate**, moves
+from "the obvious next piece" to a requirement: a 10 mm summit on four plates
+is five loose parts, and a child leaning on it is the test. Same dog-bone,
+same 0.35 mm slip fit, cut into the top of each plate and the underside of the
+next; the tile's own underside recesses already exist. `plate.stl` becomes a
+keyed plate, and the plain one stays as an option for the bottom of a stack.
+
+**Weight and filament.** A 50 mm class tile is a 2-litre slab. It is the
+slicer's job to hollow it — sparse infill, five floors under the water — and
+the plan should say per class roughly what it weighs and how long it prints,
+measured off the first one.
 
 **Everything stands in the tray.** It already exists (`tray.stl`) and the
 dam case makes it mandatory: water held against a butt seam weeps through it,
@@ -391,8 +464,9 @@ Each phase leaves the tests green and the example building the same bytes.
    rotation, and `mmb board`; `fallMM: 0`; the freeboard check. Tests are the
    sentences in §4.2. *Done when* a hand-written four-tile board reports a
    waterfall, a dam that ponds to 16, and a two-plate dam that overtops.
-2. **The set rule.** Corners from the height class, not the world; the design
-   window; the catalogue and `mmb set`. *Done when* two designs cut from
+2. **The set rule.** Base class per design, ports from the rim, corners from
+   the class, not the world; the design window; keyed plates; the catalogue
+   and `mmb set`. *Done when* two designs cut from
    opposite ends of the world, rotated, verify flush against each other at
    `< 1e-6 mm`.
 3. **The staged pipeline.** `plan`/`grow`/`cut`/`refine`/`mesh` with caches
@@ -412,13 +486,20 @@ whether the brief's rules hold in the contract's numbers; it should go first
 even though the UI is the visible ask. Phases 4–6 are the bulk of the work
 and are independent of each other once 3 is in.
 
-## 10. Open questions, with a recommendation on each
+## 10. Decisions
 
-1. **Level tiles: fall 0, or a 2 mm bias?** Recommend 0 and test in water.
-2. **Height classes: 0–3, or 0–2?** Three plates is 30 mm of wall between
-   neighbours; above that a seam is a cliff a small hand cannot reach over.
-   Recommend 0–3 allowed, 0–2 in the first set.
-3. **Integral risers from the start?** Recommend yes for the first printed set,
-   with `plates` kept for iterating designs cheaply.
-4. **One world per set, or per tile?** Recommend per set with windows (§5);
-   `world: 'own'` for the odd piece.
+Taken, 4 November 2026:
+
+- **Risers are loose plates.** The base class is printed in; plates are a
+  shared part. Plate keys become a requirement (§8).
+- **Base classes are 10, 20, 30, 40, 50 mm.** The class is the budget for
+  everything cut below the rim; the tool refuses a feature deeper than the
+  class holds and names the class it needs (§3.2).
+- **The floor under a channel is 2 mm.**
+
+Still open:
+
+1. **Level tiles: fall 0, or a 2 mm bias?** Recommend 0 and test in water
+   with the first printed pair.
+2. **How tall a stack?** Plates are a play-time choice, so the limit is a
+   guide, not a rule: `maxStackPlates` stays and the board warns past it.
