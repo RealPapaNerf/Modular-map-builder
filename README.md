@@ -986,6 +986,11 @@ Next: **keying the plates to each other**, which is what the seven unkeyed
 seams on the example map are waiting for; then mesa stratigraphy wired into a
 fluvial pass.
 
+Where this is going: a **set** of interchangeable tiles for a water table,
+any piece next to any piece, with a board that says what the water will do and
+an editor you draw in. The design is in
+[`docs/water-table-blueprint.md`](docs/water-table-blueprint.md).
+
 Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 `erosionK` are the levers.
 

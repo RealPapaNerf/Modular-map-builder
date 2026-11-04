@@ -1,0 +1,540 @@
+# A water table of interchangeable tiles — blueprint
+
+*The design for turning the map builder into a tile set a child shuffles,
+and for the editor that draws it. Draft 1, 4 November 2026.*
+
+---
+
+## 1. The change in one sentence
+
+The builder stops making **one map** whose tiles happen to mate, and starts
+making a **set** of self-contained tiles from a short, fixed vocabulary of
+edges — so any tile can sit next to any tile — plus a **board** that says what
+the water will do for whatever arrangement the child has made; and the app
+becomes a three-stage editor: **draw** the board and the tiles in 2D, **grow**
+them in 3D, **refine** them with brushes and handles, then print.
+
+## 2. The brief, read against what exists
+
+The brief, in its own words:
+
+> Build a water table of interchangeable tiles. Engaging and interesting.
+> They operate independently of whatever tile is next to them. They interact
+> with other tiles of the same base height. A tall tile next to a short tile:
+> a river becomes a waterfall. If the short tile has the flow, the tall tile is
+> a dam, and the kid plays with that or removes it and shuffles the set. A 2D
+> map that I draw on and define parameters, then I grow the 3D map, then I
+> edit it some more.
+
+Most of the hard machinery for this is already in `lib/`, and it was built for
+a subtly different thing. Where the two part company:
+
+| the brief wants | the code does today | the gap |
+|---|---|---|
+| a **set** of tiles, any next to any | a **map**: one world, one river graph, plate levels *solved* from the river so each tile sits exactly where its neighbour needs it | tiles only fit the neighbours they were generated with |
+| land edges that always mate | corner heights sampled from the world terrain (`cornerLattice`), quantised to 10 mm but otherwise free | a map of nine tiles has ~16 distinct corner heights; two tiles agree only if they were cut side by side |
+| tall tile / short tile as a thing the child decides | the tile's height is the plate stack the *river* demands (`assignLevels`) | the risers are an output of the design, not a thing the child stacks |
+| tiles interact: waterfall, dam, pond | `classifySeam` already names plane / cliff / waterfall / dam / ledge, and `buildMap` already ponds a tile behind a dam | per seam only, for the designed layout; nothing follows the water through a *whole arrangement* (a pond backing up three tiles, a dam overtopping a 10 mm rim) |
+| draw, grow, refine | a form, a JSON textarea, a hillshade PNG, a download list | no canvas, no 3D, no editing after the build |
+| rotate a tile | ports are at the centre of each edge and keys are symmetric about the centre, so rotation *would* work | nothing represents a rotation |
+
+The right reading of this is that the **edge contract was the right idea and
+has to become a fixed vocabulary**, the **plate solver becomes a checker**
+instead of an oracle, and the UI is a rebuild. Nothing in the terrain, glacier, river,
+lake, spring, canopy, key or mesh code has to change in kind.
+
+## 3. The set contract
+
+Everything below is `contract.js` growing, not being replaced. The invariant
+that every finished tile honours its declared rim to `< 1e-6 mm` stays; what
+changes is **which rims are allowed to be declared**.
+
+### 3.1 A tile is four edges with their own heights, on riser blocks
+
+```
+tile design  = { id, corners: {sw,se,nw,ne: 10|20|30|40|50}, edges: {N,E,S,W}, fallMM, features... }
+edge         = land                  the rim runs between its two corner heights
+             | in  <size> @ 2+fall   a river comes in; 12 on a flat tile, up to 52
+             | out <size> @ 2        a river goes out, 2 mm above the tile's bottom
+             | drain <size>          out, declared as falling into the tray
+placement    = { design, col, row, rot: 0|1|2|3, riserMM: 0|10|20|30|... }
+```
+
+**Heights are measured from the tile's bottom, and the river is 12 in, 2 out.**
+That is the flow rule the README opens with, unchanged: water leaves a tile
+2 mm above its bottom and arrives at the next 12 mm above *its* bottom, so
+the next tile stands one riser lower. A steeper tile puts its inlet higher on
+the same ladder — 22, 32, 42, 52 — and stands that much further below its
+upstream neighbour. There is no level tile; every river tile falls at least
+10 mm across itself, and the pump's head is not what moves the water.
+
+**Risers are loose blocks, 10, 20, 30 and 40 mm tall**, stacked however the
+kids like, under 200 × 200 mm tiles. A tile's rim in the world is
+
+```
+rimWorld(edge) = riserMM + cornerHeight
+```
+
+**The rim height belongs to the edge, not the tile.** A tile can be 50 mm
+at its north edge and 10 mm at its south: the slab slopes between, and an
+outlet on the 10 mm side is a channel 8 mm deep where an outlet on a 50 mm
+side is a 48 mm slot — a gorge mouth. Corners carry the heights, as they do
+today, and an edge reads its two; a tile that is 50 on one side and 10 on the
+other has two ramp edges (`land 50/10`) that mate only with ramp edges the
+other way round. That is fewer partners, and it is fine: the catalogue says
+so, and the brief says the pieces may be put together in ways nobody planned.
+
+In the code this is the current contract with the corner lattice freed from
+the world: `corners` is already a per-tile field, `edgeProfile` already ramps
+between two corner heights, `portFloor` already measures from the bottom, and
+`conformToContract` already makes the tile meet whatever rim it is given
+without flattening it. What goes is `cornerLattice` reading the terrain; what
+arrives is a per-design `corners` the author sets, defaulting to one class all
+round.
+
+### 3.2 What a tile can hold, and what runs fast
+
+**Everything cut down into a tile keeps 2 mm of floor.** That is the brief's
+number — 0 is a hole, 2 is sturdy without wasting filament — and it is the
+*only* depth rule. A channel, a lake bed, a spring pool, a fjord: each is cut
+from wherever the water's surface is down to no lower than 2 mm above the
+bottom. So on a flat slab the budget is the class less two:
+
+| rim | holds |
+|---|---|
+| **10** | a creek, 8 mm deep at its mouth. Nothing stands in it |
+| **20** | an 18 mm water feature: a river, a pond, the reservoir behind a same-level dam |
+| **30** | 28 mm: a lake, the reservoir behind a one-riser dam |
+| **40** | 38 mm: a deep lake |
+| **50** | 48 mm: a fjord or a bay |
+
+and on a mountain tile the budget is bigger, because the ground around a
+lake can stand well above the rim: a tarn 30 mm deep in a cirque on a 10 mm
+tile is legal if its bed stays 2 mm off the bottom. The tool measures the
+real bed against the real floor and says what it finds — *"this lake is
+32 mm deep and its bed is 1 mm above the bottom; raise its surface or
+lower its depth"* — instead of guessing from the class.
+
+(`check` will still note that 2 mm under standing water is about ten
+layers at 0.2 mm. It is a note. Four perimeters, five floors, and the paint
+are the answer, as the README says.)
+
+**Water may narrow and speed up.** A 50 mm fjord entering a tile and leaving
+it as a 10 mm creek is a design, not an error: the water gushes. Today
+`autoSizeRivers` warns *"it will flood"* when a declared outlet is narrower
+than its inflow wants; that becomes a note, *"runs fast"*, and the channel is
+cut as declared. The same at a seam on the board: a wide port facing a narrow
+one is predicted (the narrow channel takes what it can and the rest spreads
+over the banks) and never refused.
+
+**The dam cases come out in neat steps**, because every seam is 12 against 2:
+
+| the next tile stands | what the seam is |
+|---|---|
+| one riser lower | **flows** — the designed case |
+| two risers lower | a **10 mm waterfall** |
+| level with this one | a **10 mm dam**: this tile ponds to 12. A 10 mm rim overtops; 20 holds |
+| one riser higher | a **20 mm dam**: ponds to 22. 20 overtops; 30 holds |
+| land across the seam | a dam to that edge's rim height, overtopping at this tile's own |
+
+Which is to say: whether a tile *holds* its pond is set by its rim, and the
+board knows the rim of every edge, so it can say *"B2 fills and runs over its
+west side"* before a drop of water is in it.
+
+### 3.3 Rotation is free, and the code should say so
+
+`portPoint` puts every port at the middle of its edge, `edgeProfile` is
+symmetric about that middle, and `planKeys` spaces keys at `T(k+1)/(n+1)`,
+symmetric about the centre. So a design rotated by 90° mates exactly like the
+unrotated one. `board.js` owns the edge map (`N→E→S→W` under `rot`), and a test
+asserts that a placed tile's four signatures are the design's, rotated. The
+printed piece needs a north mark on the underside and nothing else.
+
+### 3.4 The catalogue
+
+`edgeSignature` already prints `in creek@16 22/22`. Make that canonical and
+add `mmb set` (and the same panel in the app), which lists every design, its
+four signatures, and **how many distinct signatures the set uses**. A set that
+shuffles well has few: flat land at one or two heights, a ramp or two, and
+three or four port types. The count going up is the first sign a set has stopped being
+interchangeable, which is easier to see as a number than on a table.
+
+## 4. The board: what the water does
+
+New module, `lib/board.js`. Pure, fast (microseconds for 64 tiles), tested on
+its own, and the thing the editor calls on every mouse-up.
+
+**In:** the set, a grid of placements, which tiles are fed (a spring, a hose).
+**Out:** a water level per tile, a kind per seam, and a list of things worth
+saying.
+
+### 4.1 The model
+
+Each placed tile is one pool with a floor at its lowest port and a rim at the
+lowest of its four edges, both in world mm (`riserMM + local`). Each outlet faces a
+**sill**:
+
+| what is across the seam | the sill |
+|---|---|
+| an inlet | that inlet's floor |
+| a land edge | that edge's land height (the pond would have to overtop it) |
+| nothing | the tray — water leaves the board |
+
+and every tile has one more exit, its own rim, which also leads to the tray.
+
+Fed tiles start at their floor. Then a fixed point: a tile's level is the
+**lowest sill among its exits**, and where that exit is an inlet whose tile has
+ponded higher, the two merge into one pond at the higher level. Levels only
+ever rise and are capped at the rim, so it converges; ten passes cover any
+board a child can lift.
+
+### 4.2 What it reports, per seam
+
+| situation | kind | what the child sees |
+|---|---|---|
+| outlet at 2 meets inlet at 12, one riser down | **flow** | the river runs across |
+| outlet floor above inlet floor | **waterfall h** | it falls `h` |
+| outlet floor below inlet floor, pond held under the rim | **dam, ponds to Z** | the short tile fills up |
+| a wide port meets a narrow one | **spreads** | the narrow channel takes what it can; the rest goes over the banks |
+| the pond reaches an upstream outlet | **backs up** | the tile behind floods too, as far back as the pond can reach |
+| the pond reaches the rim | **overtops** | water sheets over the land into the tray |
+| outlet facing land | **blocked** | same as a dam, with the land as the wall |
+| outlet facing nothing | **drains** | it runs off the edge into the tray |
+| inlet fed by nothing | **dry** | a river bed with no water in it, which is fine |
+
+These are the brief's sentences — *a river becomes a waterfall; if the short
+tile has the flow, the tall tile is a dam* — made checkable. The tests are the
+same sentences: a pair two risers apart is a 10 mm waterfall; a same-level
+pair is a 10 mm dam that a 20 mm rim holds and a 10 mm rim overtops; a pond
+backs up into the tile behind it; a ring of tiles at one level is a chain of dams, not an error.
+
+What `assignLevels` does today — refusing a layout whose two ways round a loop
+drop differently — becomes a **note on the board** rather than a reason not to
+build. In a set the piece is right; it is the arrangement that dams, and the
+child will move it.
+
+### 4.3 It also drives the design
+
+The same solver, run on the *design* board in the editor, is how the author
+sees what the set can do before printing: lay out the pieces, drag one, watch
+the badges on the seams change. The badges are the first thing the
+editor shows, because they cost nothing and they are the play the brief
+describes.
+
+## 5. The pipeline, in stages
+
+`buildMap` is one long synchronous call: world, glacier, every tile, every
+feature, every mesh, then back. The editor needs to run the cheap parts on
+every click and the slow part once. So `build.js` splits along lines it
+already has:
+
+```
+plan     (ms)    contract, set catalogue, board hydrology            → badges, report
+grow     (slow)  the set's world: uplift, volcanoes, ice, hillslope  → one cached bed
+cut      (fast)  per design: window, cutTile, route, conform, carve  → a height field
+refine   (fast)  per design: replay edits, lakes, springs, woods,
+                 recesses, conform again, verifyEdges                → the final field
+mesh     (medium) per design: meshTile, checkWatertight             → triangles, STL
+```
+
+Each stage caches its output in the worker and invalidates only what its
+inputs touched: change a tree density and only `refine` and `mesh` rerun for
+that one design; change the seed and everything does. The cache keys are the
+JSON of the inputs each stage reads, which is the same idea relief's `viewKey`
+/ `warpKey` use.
+
+**Where a design's ground comes from.** Keep one world per set — the glacier
+needs its 16 km to behave and it is the expensive thing — and give each design
+a **window** into it (`world: { at: [u, v], spanFrac, rot }`) plus its own
+seed for everything downstream (river wander, meanders, tree scatter, lake
+lobes). Designs are cut from the world on a *design grid*, not the board grid;
+the board grid is where the child puts them. A design that wants its own
+world (a lone volcano) says `world: 'own'` and gets a small one.
+
+**Edits are operations, not pixels.** The refine stage replays a list:
+
+```json
+"edits": { "ridge-3": [
+  { "op": "raise",   "path": [[80,40],[120,90]], "radiusMM": 12, "mm": 4 },
+  { "op": "flatten", "at": [140,60], "radiusMM": 20, "toMM": 30 },
+  { "op": "lake",    "atMM": [60,120], "depthMM": 5 },
+  { "op": "spring",  "atMM": [30,100] },
+  { "op": "smooth",  "path": [[...]], "radiusMM": 10 }
+] }
+```
+
+Brushes are masked to zero within `rimLockMM` (12 mm) of the rim with a
+smoothstep, applied after `carve` and before the lakes, and followed by
+`conformToContract` and `verifyEdges` as now — so **an edited tile still
+proves its contract exactly**, and the "same spec builds the same bytes"
+test still holds with edits in the spec. It also means the author can change
+the glacier's climate and keep every brushstroke, because the strokes are
+replayed onto the new ground.
+
+## 6. The editor
+
+Three stages, one project file, the same `lib/` the CLI runs, no bundler.
+
+### 6.1 Layout
+
+```
+[ Draw | Grow | Refine | Print ]                            stage tabs
+┌──────────┬────────────────────────────────────┬──────────────┐
+│ tools    │ canvas: the board, or one tile     │ inspector    │
+│ palette  │ (2D canvas in Draw, 3D in Grow     │ parameters   │
+│ designs  │  and Refine, 2D hillshade under)   │ of selection │
+├──────────┴────────────────────────────────────┴──────────────┤
+│ status · badges · report                     ▸ Spec JSON     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The JSON textarea moves into a drawer and stays the single source of truth,
+as it is now: every tool writes the spec and reads it back.
+
+### 6.2 Draw
+
+**The board canvas.** A grid of cells. Tools: *place* (drag a design from the
+palette; `R` rotates, `Delete` removes), *risers* (paint 0, 10, 20… on a cell),
+*river* (drag a line across cells; it writes `rivers[].path` and the ports
+fall out, as `portsFromRivers` does now), *fall* (click a cell, pick 0/10/20/
+30/40/50), *spring* and *drain* (click an open port). Every mouse-up runs
+`plan`, and the seams show their kind as badges — a blue arrow, a white
+waterfall bar with its height, a red dam with its pond level, a dashed
+"overtops". This is §4 made visible and it is most of the fun.
+
+**The tile canvas.** Double-click a cell to zoom into its design. Paint intent
+as shapes, in tile-local millimetres, each of which is already a spec field
+or a small extension of one:
+
+| you draw | it writes | exists today |
+|---|---|---|
+| a polyline | `spine` (ridge) or a `valley` | `spine` yes; valley is a negative spine |
+| a point with a radius | `volcanoes[]`, `flats[]` | yes |
+| a point | `lakes.place[]`, `fountains.place[]` | yes |
+| a polygon | `canopy[].region` | new: a mask on `scatterCanopy` |
+| a corner toggle | `corners` at +1 plate | yes (`corners`) |
+| the window | `world.at / spanFrac / rot` | new |
+
+No map library: Leaflet is for geography, and this is a 200 mm square. A
+plain `<canvas>` with a transform, and the existing hillshade drawn under it
+once there is one.
+
+### 6.3 Grow
+
+Runs `grow` once and `cut` + `refine` + `mesh` per design, with progress per
+stage as now. The result arrives in the main thread as one `Float32Array` of
+heights per design (transferred, not copied), from which the viewer builds a
+`BufferGeometry` directly. At draft mesh that is 81² vertices per tile — the
+3D view is instant; the 0.9 mm printable mesh is 50 k vertices per tile and
+WebGL does not notice nine of them.
+
+**The viewer** is relief's `viewer.js` with the geography taken out:
+`three.module.min.js` and `OrbitControls.js` vendored under `lib/vendor/` with
+their licences, as relief already does, z-up tipped to y-up, render on change
+only. Drawn: each tile on its plates, the water as a
+translucent surface from the `wet` mask and the board's pond levels, trees as
+the field already has them, seams as thin lines, badges floating at the seams.
+The board's hydrology drives what the water looks like, so a dam *shows* as a
+flooded tile before anything is printed.
+
+### 6.4 Refine
+
+Brushes on the 3D view (ray-cast to the tile, write an `edits` op, rerun
+`refine` for that design): raise, lower, smooth, flatten-to, dig a lake, place
+a spring, plant or clear trees. Handles on things already placed: drag a lake,
+a spring, a volcano, a ridge vertex. The rim is drawn locked and the brush
+visibly fades to nothing over the last 12 mm — the author should see the
+contract, not be surprised by it. Undo is popping the ops list.
+
+### 6.5 Print
+
+What the download panel is today, plus the set catalogue, a per-design print
+list ("print 2 of `ridge-3`, 1 of `fall-20`"), the plates or integral risers
+(§8), keys and the tray. Unchanged in kind.
+
+### 6.6 The worker protocol
+
+Today: `run` / `stl` / `zip`. Add `plan`, `grow`, `cut`, `refine`, `mesh`
+with a design id, all cached in the worker; `heights` returning transferred
+arrays for the viewer; `cancel` by termination as now. One worker to begin
+with; a pool of `hardwareConcurrency` for `cut`/`refine`/`mesh` is a later
+speed-up that the per-design split makes trivial.
+
+## 7. What stays, what changes, file by file
+
+| file | change |
+|---|---|
+| `lib/contract.js` | corner heights from the class ladder {10..50}, per design; `check()` gains the 2 mm floor rule and loses the width-never-narrows error; the lip at 2 × 1 mm with the rebate on the inlet; canonical catalogue signature |
+| `lib/board.js` | **new**: placements, rotation, riser heights, the hydrology fixed point, seam kinds, the catalogue count |
+| `lib/build.js` | split into `plan` / `grow` / `cut` / `refine` / `mesh` with caches; `cornerLattice` replaced by the set rule; `assignLevels` kept as the *designer's* checker, no longer the oracle |
+| `lib/edits.js` | **new**: the op list, the rim mask, replay |
+| `lib/canopy.js` | a `region` polygon mask on `scatterCanopy` |
+| `lib/river.js`, `lake.js`, `fountain.js`, `joint.js`, `mesh.js`, `stl.js`, `glacier.js`, `terrain.js`, `hillslope.js`, `basins.js`, `noise.js`, `field.js`, `tile.js` | unchanged in kind; `tile.js` reads the window instead of the board cell |
+| `lib/vendor/` | three.js and OrbitControls, with licences, as in relief |
+| `app/` | `board.js` (2D canvas), `tilecanvas.js`, `viewer.js`, `tools.js`, `inspector.js`; `main.js` becomes the stage switcher; `worker.js` gains the stage messages |
+| `bin/mmb.mjs` | `mmb set` (catalogue), `mmb board` (hydrology report) |
+| `test/` | board hydrology cases; rotation; set signatures; edits replay determinism; the freeboard rule |
+| `README.md` | the set contract and the board, written the way the flow rule is |
+
+The spec file grows two top-level keys and loses nothing:
+
+```json
+{ "contract": {...}, "world": {...},
+  "designs":  [ { "id": "ridge-3", "corners": { "sw": 10, "se": 10, "nw": 20, "ne": 20 }, "fallMM": 10, "edges": {...}, "world": {...}, "canopy": [...] } ],
+  "board":    { "cols": 4, "rows": 3, "place": [ { "design": "ridge-3", "col": 0, "row": 2, "rot": 1, "riserMM": 20 } ] },
+  "edits":    { "ridge-3": [ ... ] } }
+```
+
+Today's `rivers` / `falls` / `waterfalls` / `levels` keep working as a
+**map-style** spec: it is read as a board whose designs are generated in
+place, with `assignLevels` supplying the riser heights. The example map
+builds the same bytes as before, which is the regression that proves the
+refactor did not change the generator.
+
+## 8. Physical decisions the brief raises
+
+**Risers are loose blocks — decided.** 10, 20, 30 and 40 mm tall, 200 ×
+200 mm, the same parts under every set, which is what lets any map interact
+with any other. The consequence is that **keying the blocks to each other,
+and the tile to the block under it**, moves from "the obvious next piece" to
+a requirement: a 10 mm summit on a 40 and a 20 is three loose parts, and a
+child leaning on it is the test. Same dog-bone, same 0.35 mm slip fit, cut
+into the top of each block and the underside of the next; the tile's own
+underside recesses already exist. `plate.stl` becomes four keyed blocks.
+
+**The lip is 2 mm out and 1 mm tall.** The outlet's channel floor carries on
+2 mm past the tile face as a 1 mm tongue; the inlet's floor has a matching
+rebate, 2.3 mm in and 1.3 mm down, that the tongue drops into. The seam gap
+is then under the water rather than in it, as the README argues, and the
+inlet floor has 12 mm of material to cut the rebate from — so the README's
+objection that an overlapping seam needs 4 mm of plate under the *outlet*
+falls away: nothing is cut from the outlet, the tongue is added to it.
+Two things to test on the first pair: a 1 mm tongue 2 mm proud of a tile
+face is the first thing a child will snap, and a tile with tongues on one
+side and rebates on another has to be set down from above, not slid in.
+`tongueMM: 2, tongueThickMM: 1` in the contract; the geometry in
+`seamGeometry` and the cut in `mesh.js`.
+
+**Weight and filament.** A 50 mm class tile is a 2-litre slab. It is the
+slicer's job to hollow it — sparse infill, five floors under the water — and
+the plan should say per class roughly what it weighs and how long it prints,
+measured off the first one.
+
+**Everything stands in the tray.** It already exists (`tray.stl`) and the
+dam case makes it mandatory: water held against a butt seam weeps through it,
+and the pump puts it back. *You do not need watertight; you need all of it to
+come back.* The lip is only for outlet-to-inlet; a pond held against a land
+edge weeps through the butt seam, and the pump puts it back.
+
+**The dam with a spillway.** A land edge with a notch at a set height
+(`spillway@Z`) is a new edge type that turns "the pond overtops somewhere" into
+"the pond spills *here*, as a waterfall". It is the single most engaging
+tile this set can have, and it is a Phase 6 item because it needs the edge
+vocabulary settled first.
+
+**Tile size stays 200 mm.** The brief's child-scale pieces, the 220 mm bed,
+and every number in the contract agree on it.
+
+## 9. Phases
+
+**The editor comes first.** It is the part most likely to be built as
+something other than what was pictured, and a wrong editor is the costly
+rewrite; a wrong solver is a file. So the first phases put the four stages on
+screen against the generator *as it is today*, with the board solver only as
+far as the badges need it, and the contract work follows behind a UI that can
+already show it. Each phase leaves the tests green and the example map
+building the same bytes.
+
+1. **The editor shell and Draw.** `app/` becomes the four-stage layout in
+   §6.1 — stage tabs, tool palette, canvas, inspector, status strip, the JSON
+   in a drawer — with the **Draw** stage working: the board canvas with
+   place / rotate / risers / river / fall / spring / drain tools writing the
+   spec, and the tile canvas writing `spine`, `flats`, `volcanoes`,
+   `lakes.place`, `fountains.place`, `corners` and a canopy `region`. Badges
+   on the seams come from a **first `lib/board.js`** that does only what the
+   badges need: rotation, riser heights, and the seam table in §3.2 and §4.2
+   — flow, waterfall, dam-and-ponds-to, overtops, drains, dry, spreads — with
+   tests for each row. The pond backing up through several tiles can wait
+   for phase 4. *Done when* the example map can be drawn from an empty board
+   without opening the JSON, and dragging one tile up a riser flips its
+   seams' badges live.
+2. **Grow.** The three.js viewer (relief's `viewer.js`, geography removed,
+   `three.module.min.js` and `OrbitControls.js` vendored with licences)
+   showing what `buildMap` returns today: each tile on its risers, water as
+   a translucent surface from the `wet` mask, seams, badges floating at the
+   seams. Heights cross the worker boundary as one transferred
+   `Float32Array` per tile. The hillshade stays as the board canvas's
+   background. *Done when* a draft-mesh build is on screen in 3D within a
+   few seconds and orbiting it is smooth.
+3. **Refine, as a shell.** The brush and handle tools on the 3D view
+   writing `edits` ops into the spec, with undo, the rim lock drawn — and the
+   ops **replayed by a first `lib/edits.js`** inside today's `buildMap`,
+   after the carve and before the lakes, followed by the conform. The
+   whole map rebuilds on each stroke at this stage; it is slow and it is
+   correct. *Done when* a raised ridge survives a change of seed and the
+   edge check still reads zero.
+4. **The board, properly.** `lib/board.js` grows the fixed point: ponds that
+   back up, merged ponds, the design checker reporting what a layout wants.
+   `mmb board`. *Done when* the test boards in §4.2 all report as written.
+5. **The set rule.** Corner heights per design from the class ladder, not
+   from the world; the design window; the 2 × 1 mm lip; the 2 mm floor
+   rule; width may narrow; the catalogue and `mmb set`; keyed riser blocks.
+   The Draw palette now holds *designs*, placed many times. *Done when* two
+   designs cut from opposite ends of the world, rotated, verify flush at
+   `< 1e-6 mm`, and the catalogue counts the set's edge types.
+6. **The staged pipeline.** `plan` / `grow` / `cut` / `refine` / `mesh`
+   with caches in the worker, so a brushstroke reruns one design in well
+   under a second; a worker pool after that. Then the spillway edge.
+
+Phases 1–3 touch `lib/` only to add `board.js` and `edits.js`, both small and
+both tested on their own, so the UI can be judged before the generator is
+reorganised under it. If the editor in phase 1 is not the one that was
+pictured, nothing below it has been built yet.
+
+### 9.1 What phase 1 must not do
+
+So that a session building it does not guess:
+
+- **Not a form.** No stack of labelled inputs as the primary surface. The
+  canvas is the editor; the inspector shows the parameters of what is
+  selected and nothing else.
+- **Not a map library.** No Leaflet, no tiles, no lat/lon. A `<canvas>` with
+  a transform, in tile millimetres.
+- **Not a new spec.** Every tool writes the spec the CLI reads, and the JSON
+  drawer shows it changing. The example in `lib/example.js` loads and draws.
+- **Not a bundler.** ES modules from `lib/` and `app/`, served static, as
+  now. Three.js vendored under `lib/vendor/` with its licence, the way
+  relief does it.
+- **Not a framework.** Plain DOM and canvas, as the current app is. One
+  `state` object, one `render()`, tools as objects with `down / move / up`.
+- **Not silent.** Every spec change runs `plan` and redraws the badges; the
+  status strip says what the board would do, in the sentences of §4.2.
+
+## 10. Decisions
+
+Taken, 4 November 2026:
+
+- **The river is 12 in, 2 out, measured from the tile's bottom.** Every
+  river tile falls at least 10 mm; steeper ones put the inlet higher on the
+  ladder. There is no level tile.
+- **Risers are loose blocks, 10 / 20 / 30 / 40 mm.** Block keys become a
+  requirement (§8).
+- **Rim heights are per edge, 10–50 mm, carried on the corners.** A tile may
+  be 50 on one side and 10 on the other.
+- **Everything cut into a tile keeps 2 mm of floor.** That is the only depth
+  rule; the tool measures rather than guesses (§3.2).
+- **Water may narrow and run fast.** Not an error, in a tile or at a seam.
+- **The lip is 2 mm out, 1 mm tall**, tongue on the outlet, rebate on the
+  inlet.
+- **The board predicts and never refuses.** Putting it together wrong is a
+  way to play; the design checker still tells the author what a layout wants.
+
+Still open:
+
+1. **Does a tall edge always carry a tall inlet?** This draft keeps them
+   separate — a 20 mm slab with an ordinary river is 12 in, 2 out — so an
+   inlet's height is its fall and the edge's height is its rim. Tying them
+   (a 50 edge means an inlet at 52) halves the catalogue and is one line to
+   change.
+2. **How tall a stack?** Risers are a play-time choice, so the limit is a
+   guide, not a rule: `maxStackPlates` stays and the board warns past it.
