@@ -477,7 +477,7 @@ Each phase leaves the tests green and the example building the same bytes.
    writing spec fields; the JSON in a drawer. *Done when* the example map can
    be drawn from an empty board without touching the JSON.
 5. **Grow.** The three.js viewer from transferred height fields, with water
-   at the board's pond levels and plates at the height class.
+   at the board's pond levels, each tile standing on its plates.
 6. **Refine.** Brushes and handles writing `edits`; undo; the rim lock
    visible. Then the spillway edge, `riser: 'integral'`, and a worker pool.
 
