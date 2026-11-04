@@ -57,22 +57,26 @@ export function tileHeights(t) {
     }
   }
 
-  // A spring pool fills to the notch in its lip and no higher.
+  // A spring pool fills to the notch in its lip and no higher. The build
+  // marks it wet as a disc of whole cells round the nearest one, a little
+  // wider than the pool, so every cell of THAT disc is decided here: under
+  // the spill it is the pool, over it the lip -- and never running water,
+  // which would stand a ring of river above the pool's own surface.
   for (const sp of t.springs || []) {
-    if (!sp.atMM || !Number.isFinite(sp.spillMM)) continue;
-    const [x0, y0] = sp.atMM;
-    const R = sp.poolRadiusMM;
-    const i0 = Math.max(0, Math.floor((x0 - R) / step));
-    const i1 = Math.min(nx - 1, Math.ceil((x0 + R) / step));
-    const j0 = Math.max(0, Math.floor((y0 - R) / step));
-    const j1 = Math.min(ny - 1, Math.ceil((y0 + R) / step));
-    for (let j = j0; j <= j1; j++) {
-      for (let i = i0; i <= i1; i++) {
-        if (Math.hypot(i * step - x0, j * step - y0) > R) continue;
+    if (!sp.atMM || !Number.isFinite(sp.spillMM) || !(sp.poolRadiusMM > 0)) continue;
+    const ri = Math.round(sp.atMM[0] / step);
+    const rj = Math.round(sp.atMM[1] / step);
+    const rad = Math.ceil(sp.poolRadiusMM / step);
+    for (let j = rj - rad; j <= rj + rad; j++) {
+      for (let i = ri - rad; i <= ri + rad; i++) {
+        if (i < 0 || j < 0 || i >= nx || j >= ny || Math.hypot(i - ri, j - rj) > rad) continue;
         const k = j * nx + i;
-        if (heights[k] >= sp.spillMM) continue;
-        kind[k] = STILL;
-        water[k] = max(water[k], sp.spillMM);
+        if (heights[k] < sp.spillMM) {
+          kind[k] = STILL;
+          water[k] = max(water[k], sp.spillMM);
+        } else if (kind[k] === RIVER) {
+          kind[k] = GROUND;
+        }
       }
     }
   }

@@ -64,6 +64,26 @@ test('a built tile crosses the boundary as Float32 heights, its standing water a
   assert.ok(buffers.every((b) => b instanceof ArrayBuffer));
 });
 
+test('every cell of the build\'s pool disc is pool or lip, never running water', () => {
+  // The build marks a pool wet as a disc of whole cells round the nearest
+  // one, wider than the pool itself. A cell of that disc left as river would
+  // be drawn at its bed plus the river's depth: a ring above the pool.
+  const t = fakeTile();
+  t.lakes = [];
+  t.local.values[19] = 28; // (4, 3): a channel cell on the lip, above the spill
+  t.wet[19] = 1;
+  t.wet[18] = 1;
+  const h = tileHeights(t);
+  assert.equal(h.kind[18], STILL, 'the middle of the pool');
+  assert.equal(h.kind[17], STILL, 'a channel cell in the disc, under the spill, is pool');
+  assert.equal(h.water[17], 25);
+  assert.equal(h.kind[19], GROUND, 'a cell in the disc over the spill is lip, not river');
+  assert.ok(Number.isNaN(h.water[19]));
+  assert.equal(h.kind[12], RIVER, 'outside the disc the channel is still a channel');
+  const s = waterSurface(h, { running: true });
+  for (const k of [17, 18]) assert.equal(s[k], 25, 'one surface over the whole pool');
+});
+
 test('a dry tile with no lakes has no water at all', () => {
   const t = fakeTile();
   t.lakes = [];
@@ -194,7 +214,22 @@ test('on a real build every carved cell is drawn as something, and the river run
   for (const t of r.tiles) {
     const h = tileHeights(t);
     assert.equal(h.heights.length, t.local.nx * t.local.ny);
-    for (let k = 0; k < h.kind.length; k++) if (t.wet[k]) assert.notEqual(h.kind[k], GROUND, `${t.label} cell ${k} is wet`);
+    // The cells the build marked wet round a spring pool and that stand over
+    // its spill are its lip; everything else wet is water of some kind.
+    const lip = new Set();
+    for (const sp of t.springs) {
+      const ri = Math.round(sp.atMM[0] / h.step);
+      const rj = Math.round(sp.atMM[1] / h.step);
+      const rad = Math.ceil(sp.poolRadiusMM / h.step);
+      for (let j = rj - rad; j <= rj + rad; j++) {
+        for (let i = ri - rad; i <= ri + rad; i++) {
+          const k = j * h.nx + i;
+          if (Math.hypot(i - ri, j - rj) <= rad && h.heights[k] >= sp.spillMM) lip.add(k);
+        }
+      }
+    }
+    for (let k = 0; k < h.kind.length; k++) if (t.wet[k] && !lip.has(k)) assert.notEqual(h.kind[k], GROUND, `${t.label} cell ${k} is wet`);
+    for (const k of lip) assert.notEqual(h.kind[k], RIVER, `${t.label} cell ${k} is the pool's lip, not river`);
     for (const l of t.lakes) {
       if (!l.wet) continue;
       // Float32 on the way across: a few millionths of a millimetre.

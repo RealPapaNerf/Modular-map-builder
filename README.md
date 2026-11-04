@@ -887,7 +887,7 @@ npm test
 npm run test:browser      # the editor in Chromium; needs Playwright, skips without it
 ```
 
-201 checks, and 23 steps in the browser. The ones that earn their keep:
+202 checks, and 23 steps in the browser. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused

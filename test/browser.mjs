@@ -401,6 +401,15 @@ await step('DONE WHEN: orbiting it is smooth', async () => {
   const z = await stats();
   console.log(`    back to the full view ${Math.round(settled - released)} ms after letting go`);
   assert.equal(z.frames, a.frames, 'nothing is drawn while nothing changes');
+  // Redraws a moment apart with the camera still -- a hover, a turn -- say
+  // nothing about how fast the machine draws, so they are drawn full.
+  await page.evaluate(() => window.mmb.viewer().redraw());
+  await page.waitForTimeout(150);
+  await page.evaluate(() => window.mmb.viewer().redraw());
+  await page.waitForTimeout(150);
+  const r = await stats();
+  assert.equal(r.frames, z.frames + 2);
+  assert.equal(r.quickFrames, z.quickFrames, 'two redraws a moment apart are not a slow camera');
 });
 
 await step('R over a tile in 3D turns it: play, so the board answers at once and nothing grows again', async () => {

@@ -641,8 +641,8 @@ GPU), on the example at 2.5 mm:
   is 8–10 s, and 8 s of that is the ice, which runs on the 128-cell world
   whatever the mesh. The 3D view's share is held under 2.5 s by the test;
   the build's is reported and is phase 6's to cut, by caching the world.
-- **Orbiting: a median 30 ms a frame (34 fps), 90% within 36 ms,** with
-  0.6 ms of script in each. A full-quality software frame is 136 ms with
+- **Orbiting: a median 30–33 ms a frame (30–34 fps), 90% within 40 ms,**
+  with under a millisecond of script in each. A full-quality software frame is 136 ms with
   multisampling and 58 ms without, so that is quick mode, below. A GPU draws
   the nine draft tiles in a millisecond or two and never needs it.
 
@@ -663,6 +663,10 @@ Decisions the build had to take:
    below the level it ponds to, so a dam shows as a flooded tile. The surface
    is grown one vertex past the wet cells and the ground hides what it covers,
    which is what puts the shoreline exactly where the water meets the land.
+   Running water is decided per tile, not per channel: the build's wet mask
+   is one union, so a tile with one fed branch and one dry one shows both
+   running. Per-channel masks are a small addition to `carveChannels` when
+   it matters.
 3. **Two outputs added to `lib/`, neither changing a byte of any tile.**
    `fillHollows` gives each tarn its own cells as `wet`, the way `placeLake`
    already did for a placed lake, because the union cannot say which surface a
@@ -685,16 +689,19 @@ Decisions the build had to take:
    Opening Grow starts the fetch, so it is there when the build lands. A
    browser that cannot start WebGL keeps the hillshade under the board and
    says why.
-7. **Quick mode.** While the camera moves, a frame interval over 45 ms
-   halves the pixel ratio and draws the ground from every other row and
-   column, which is a second draw range in the same index buffer. One full
+7. **Quick mode.** While the camera moves, frames drawn on consecutive ticks
+   more than 45 ms apart halve the pixel ratio and draw the ground from every
+   other row and column, which is a second draw range in the same index
+   buffer. Only those count: two redraws a moment apart with the camera still
+   (a hover, a turn), or a pointer that only moves every tenth of a second,
+   say nothing about how fast the machine draws. One full
    frame is drawn once the camera stops. A software renderer also does without
    multisampling, which is more than half its frame.
 8. **Render on change means a visible change.** The camera counts as moved
    when it has moved a quarter of a pixel since the frame on screen, whoever
    moved it, and the glide after letting go is short (damping 0.16). The tail
-   of a glide stops being drawn when it stops being visible, about a second
-   after letting go even in software, and nothing is drawn after that.
+   of a glide stops being drawn when it stops being visible, a little over a
+   second after letting go even in software, and nothing is drawn after that.
 
 Left for later: an ungrown board in 3D (until something is grown, Grow shows
 the 2D board and says so), the tray and shadows, and a worker pool. The

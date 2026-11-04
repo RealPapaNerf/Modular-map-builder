@@ -344,9 +344,12 @@ let viewerModule = null;
 let viewerFailed = null;
 let viewerPending = false;
 
-/** three.js and the viewer, fetched once, the first time anybody might need them. */
+/**
+ * three.js and the viewer, fetched once, the first time anybody might need
+ * them. A fetch that fails is forgotten, so opening Grow again tries again.
+ */
 function loadViewer() {
-  viewerModule = viewerModule || import('./viewer.js');
+  viewerModule = viewerModule || import('./viewer.js').catch((e) => { viewerModule = null; throw e; });
   return viewerModule;
 }
 
@@ -355,11 +358,17 @@ function ensureViewer() {
   viewerPending = true;
   loadViewer()
     .then((mod) => {
-      viewer = mod.createViewer({ canvas: el.view3d, overlay: el.overlay3d, theme: state.theme, onHover: hover3d, onPick: pick3d });
+      try {
+        viewer = mod.createViewer({ canvas: el.view3d, overlay: el.overlay3d, theme: state.theme, onHover: hover3d, onPick: pick3d });
+      } catch (e) {
+        // No WebGL: that is the browser, and it will not change.
+        viewerFailed = { message: (e && e.message) || String(e), retry: false };
+        say(`No 3D view in this browser (${viewerFailed.message}). The grown map is the hillshade under the board.`, 'warn');
+      }
     })
     .catch((e) => {
-      viewerFailed = (e && e.message) || String(e);
-      say(`No 3D view in this browser (${viewerFailed}). The grown map is the hillshade under the board.`, 'warn');
+      viewerFailed = { message: (e && e.message) || String(e), retry: true };
+      say(`The 3D view did not load (${viewerFailed.message}). Open Grow again to try again.`, 'warn');
     })
     .finally(() => { viewerPending = false; invalidate('canvas', 'stage', 'left'); });
 }
@@ -372,13 +381,15 @@ const show3d = () => can3d() && state.prefer3d;
 let plan3dMemo = null;
 /**
  * What the board says about the GROWN tiles. While the spec is still the one
- * they were grown from that is simply the plan; once it has moved on, it is
- * the plan of the spec as grown, turned the way the tiles are turned now --
- * so the water drawn is always the water on the pieces drawn.
+ * they were grown from, and the plan reads the ground they were cut from,
+ * that is simply the plan; otherwise it is the plan of the spec as grown, on
+ * that ground, turned the way the tiles are turned now -- so the water drawn
+ * is always the water on the pieces drawn. (A Check is cut from the ground
+ * without its ice, which never becomes the plan's ground.)
  */
 function plan3d() {
   const g = state.grown;
-  if (!g.stale) return state.plan;
+  if (!g.stale && state.world?.field === g.world) return state.plan;
   const key = JSON.stringify(state.spec.rot || {});
   if (plan3dMemo?.g !== g || plan3dMemo.key !== key) {
     plan3dMemo = { g, key, plan: planBoard({ ...g.spec, rot: state.spec.rot }, { world: g.world }) };
@@ -411,6 +422,11 @@ function hover3d(hit, px, py, dragging) {
 
 function pick3d(hit) {
   if (!hit) { select(null); return; }
+  // The inspector speaks for the spec as it is now. In a view grown from an
+  // older one, a piece that is no longer on the board has nothing to say.
+  const p = state.plan;
+  const there = hit.kind === 'seam' ? p.seams.some((s) => s.id === hit.id) : p.placements.some((x) => x.col === hit.col && x.row === hit.row);
+  if (!there) { say('That is from before the last change, and is not on the board now. Grow again to see what is.', 'warn'); return; }
   select(hit.kind === 'seam' ? { type: 'seam', id: hit.id } : { type: 'tile', col: hit.col, row: hit.row });
 }
 
@@ -671,9 +687,11 @@ function growLeft() {
       ].map(([k, v]) => h('li', {}, h('span', {}, k), h('span', {}, v)))),
       g.stale ? h('p', { class: 'warn-line' }, 'The spec has changed since. Grow again to see it.') : null,
       h('button', { type: 'button', onclick: () => setStage('print') }, 'Report and files →')) : null,
-    g && !b ? h('p', { class: 'hint' }, viewerFailed
+    g && !b ? h('p', { class: 'hint' }, viewerFailed && !viewerFailed.retry
       ? 'This browser could not start WebGL, so there is no 3D view: the hillshade lies under the board instead, each tile turned the way it sits.'
-      : 'In the middle, in 3D: each tile on its risers and turned the way it sits, the water where the board says it goes, and what every seam does floating over it. Turning a tile is play, so the view follows without growing again.') : null,
+      : viewerFailed
+        ? 'The 3D view did not load, so the hillshade lies under the board for now. Open Grow again to try again.'
+        : 'In the middle, in 3D: each tile on its risers and turned the way it sits, the water where the board says it goes, and what every seam does floating over it. Turning a tile is play, so the view follows without growing again.') : null,
   ];
 }
 
@@ -1029,6 +1047,8 @@ function deleteSelection() {
 function turnUnderPointer(back) {
   const t = state.hover?.kind === 'tile' ? state.hover : state.selection?.type === 'tile' ? state.selection : null;
   if (!t || state.view.mode !== 'board') return;
+  // A grown tile that has since come off the board is not there to turn.
+  if (!state.plan.placements.some((p) => p.col === t.col && p.row === t.row)) return;
   const k = ops.keyOf(t.col, t.row);
   const now = state.spec.rot?.[k] || 0;
   commit((x) => ops.setRot(x, t.col, t.row, now + (back ? -1 : 1)), `turn ${ops.labelOf(t.col, t.row)}`);
@@ -1075,7 +1095,10 @@ function setStage(stage) {
   state.hoverKey = null;
   el.tip.hidden = true;
   // Fetch three.js while the map grows, so the 3D view is ready when it lands.
-  if ((stage === 'grow' || stage === 'refine') && workersOK) loadViewer().catch(() => {});
+  if ((stage === 'grow' || stage === 'refine') && workersOK) {
+    if (viewerFailed?.retry) viewerFailed = null;
+    loadViewer().catch(() => {});
+  }
   invalidate('all');
 }
 for (const b of document.querySelectorAll('.stages button')) b.addEventListener('click', () => setStage(b.dataset.stage));

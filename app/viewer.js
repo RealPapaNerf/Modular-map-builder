@@ -379,6 +379,8 @@ export function createViewer({ canvas, overlay, theme, onHover = () => {}, onPic
 
   /** Put the whole board in view, from the south and a little east, looking down at it. */
   function reframe() {
+    // The canvas may have changed shape while it was hidden; frame for the shape it is now.
+    if (canvas.clientWidth && canvas.clientHeight && (canvas.clientWidth !== lastW || canvas.clientHeight !== lastH)) resize();
     root.updateMatrixWorld(true);
     const box = boardBox();
     if (box.isEmpty()) return;
@@ -426,7 +428,10 @@ export function createViewer({ canvas, overlay, theme, onHover = () => {}, onPic
   /* ------------------------------------------------------------ pointer */
 
   function hitAt(px, py) {
-    for (const b of badgeRects) {
+    // Nearest first: the badges were drawn far to near, so the last one
+    // drawn is the one on top, and that is the one under the pointer.
+    for (let i = badgeRects.length - 1; i >= 0; i--) {
+      const b = badgeRects[i];
       const r = b.rect;
       if (px >= r.x - 3 && px <= r.x + r.w + 3 && py >= r.y - 3 && py <= r.y + r.h + 3) return { kind: 'seam', id: b.id };
     }
@@ -448,15 +453,26 @@ export function createViewer({ canvas, overlay, theme, onHover = () => {}, onPic
     };
   }
 
+  // A click is one pointer, pressed and let go within a few pixels and a
+  // moment; anything else is the controls' (an orbit, a pan, a pinch).
   let down = null;
   let pendingMove = null;
+  const pressed = new Set();
   const pos = (ev) => { const r = canvas.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
-  canvas.addEventListener('pointerdown', (ev) => { const p = pos(ev); down = { ...p, at: performance.now(), button: ev.button }; });
-  canvas.addEventListener('pointerup', (ev) => {
+  canvas.addEventListener('pointerdown', (ev) => {
+    pressed.add(ev.pointerId);
+    pendingMove = null; // a hover queued before the press is stale now
     const p = pos(ev);
-    if (down && down.button === 0 && Math.hypot(p.x - down.x, p.y - down.y) < 5 && performance.now() - down.at < 600) onPick(hitAt(p.x, p.y), p.x, p.y);
+    down = pressed.size === 1 ? { ...p, at: performance.now(), button: ev.button, id: ev.pointerId } : null;
+  });
+  canvas.addEventListener('pointerup', (ev) => {
+    pressed.delete(ev.pointerId);
+    const p = pos(ev);
+    if (down && down.id === ev.pointerId && down.button === 0 && Math.hypot(p.x - down.x, p.y - down.y) < 5
+        && performance.now() - down.at < 600) onPick(hitAt(p.x, p.y), p.x, p.y);
     down = null;
   });
+  canvas.addEventListener('pointercancel', (ev) => { pressed.delete(ev.pointerId); down = null; });
   canvas.addEventListener('pointermove', (ev) => {
     if (ev.buttons) { onHover(null, 0, 0, true); return; }
     const p = pos(ev);
@@ -486,9 +502,11 @@ export function createViewer({ canvas, overlay, theme, onHover = () => {}, onPic
   }
 
   // Quick mode: what a machine that cannot draw the full board at an
-  // interactive rate draws while the camera is moving. The frame interval
-  // while frames are back to back is the measure, because that is what the
-  // eye sees, whatever the GPU -- or the CPU standing in for it -- is doing.
+  // interactive rate draws while the camera is moving. The measure is the
+  // interval between frames drawn on CONSECUTIVE ticks because the camera
+  // moved: that is the machine's own pace. Two redraws a while apart -- a
+  // hover, a turn -- say nothing about it, and nor does a pointer that only
+  // moves every tenth of a second.
   function setQuick(on) {
     if (on === quick) return;
     quick = on;
@@ -496,33 +514,42 @@ export function createViewer({ canvas, overlay, theme, onHover = () => {}, onPic
     if (model) for (const t of model.tiles.values()) t.ground.geometry.setDrawRange(...t.ground.userData.ranges[on ? 'quick' : 'full']);
   }
 
+  let drewLastTick = false;
   function tick(now) {
     if (disposed) return;
     requestAnimationFrame(tick);
-    // Nowhere to see it: the pane is hidden.
-    if (canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
+    // Nowhere to see it: the pane is hidden. Come back to a full frame.
+    if (canvas.clientWidth === 0 || canvas.clientHeight === 0) {
+      drewLastTick = false;
+      if (quick) { setQuick(false); needsRender = true; }
+      return;
+    }
     if (canvas.clientWidth !== lastW || canvas.clientHeight !== lastH) resize();
+    let moving = false;
     if (fly) {
       const u = Math.min(1, (now - fly.t0) / fly.ms);
       const e = u * u * (3 - 2 * u);
       controls.target.lerpVectors(fly.fromTarget, fly.toTarget, e);
       camera.position.lerpVectors(fly.fromPos, fly.toPos, e);
       if (u >= 1) fly = null;
-      needsRender = true;
+      moving = true;
     }
     // With damping on, update() keeps the camera settling for a few frames
     // after the pointer stops.
     controls.update();
-    if (cameraMoved()) needsRender = true;
+    if (cameraMoved()) moving = true;
+    if (moving) needsRender = true;
     if (!needsRender) {
+      drewLastTick = false;
       // Stopped: one full frame, so what is left on screen is the real thing.
       if (quick && now - lastRenderAt > SETTLE_MS) { setQuick(false); needsRender = true; }
       else return;
     }
     needsRender = false;
     const since = now - lastRenderAt;
-    interval = since < SETTLE_MS ? (interval ? interval * 0.6 + since * 0.4 : since) : 0;
+    interval = moving && drewLastTick ? (interval ? interval * 0.6 + since * 0.4 : since) : 0;
     if (!quick && interval > SLOW_FRAME_MS) setQuick(true);
+    drewLastTick = true;
     lastRenderAt = now;
     drawnFrom.pos.copy(camera.position);
     drawnFrom.target.copy(controls.target);
