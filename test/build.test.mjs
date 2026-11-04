@@ -139,3 +139,32 @@ test('the stacking plate is a closed solid of exactly the right size', () => {
   const p = plateSTL(200, 200, 10);
   assert.ok(checkWatertight(p).watertight);
 });
+
+// plateSTL returns TRIANGLES, as the watertight test above relies on. The CLI
+// used to write those floats straight to plate.stl, which is a 432-byte file
+// with no STL header and no triangle count -- every slicer rejects it.
+test('a plate written as a file is a real STL, header and count and all', () => {
+  const tris = plateSTL(200, 200, 10);
+  const stl = writeSTL(tris, 'plate');
+  const n = tris.length / 9;
+  assert.equal(n, 12, 'a box is twelve triangles');
+  assert.equal(stl.length, 84 + n * 50);
+  assert.equal(new DataView(stl.buffer, stl.byteOffset).getUint32(80, true), n);
+  // The raw triangles are not an STL and must not be mistaken for one.
+  assert.notEqual(tris.byteLength, stl.length);
+});
+
+test('usableKeys counts only the pairs with a recess cut on both sides', async () => {
+  const { usableKeys } = await import('../lib/joint.js');
+  const r = buildMap({ ...SPEC, falls: {} }, () => {});
+  const usable = usableKeys(r);
+  // Every key it returns must be cut on both of its tiles.
+  for (const k of usable) {
+    for (const end of [k.a, k.b]) {
+      const t = r.tiles.find((x) => x.spec.col === end.col && x.spec.row === end.row);
+      assert.ok(t, `key ${k.id} names a tile that is not on the map`);
+      assert.ok(t.keys.some((x) => x.id === k.id), `${k.id} is not cut on ${t.label}`);
+    }
+  }
+  assert.ok(usable.length <= r.keys.length, 'cannot be more usable than planned');
+});

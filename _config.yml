@@ -1,0 +1,42 @@
+# Jekyll config for GitHub Pages.
+#
+# The site is two things: this repo's README, rendered as the landing page,
+# and the browser app under /app/. There is no build step for the app — it is
+# native ES modules importing lib/*.js straight from the published tree, so
+# what Pages serves is the same code the CLI runs.
+
+title: Modular map builder
+description: >-
+  Procedurally generated, 3D-printable modular terrain tiles with rivers that
+  actually run across the seams.
+lang: en
+theme: jekyll-theme-primer
+
+# Absolute URLs for the feed and social tags. Pages overrides these at build
+# time from the repository, so they only matter for a local `jekyll serve`.
+url: https://realpapanerf.github.io
+baseurl: /Modular-map-builder
+
+# Markdown settings matching how GitHub renders the README, so the page and
+# the repo view agree.
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+# Kept out of the published site: the CLI, the tests, the packaging. lib/ and
+# app/ are deliberately NOT excluded — the app imports the library at runtime.
+exclude:
+  - bin/
+  - test/
+  - package.json
+  - package-lock.json
+  - node_modules/
+  - tiles/
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
+  - .gitignore
+  - CLAUDE.md
+  - LICENSE

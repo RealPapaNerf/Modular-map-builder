@@ -2,3 +2,8 @@ node_modules/
 tiles/
 *.stl
 !docs/*.stl
+
+# Jekyll, if you build the Pages site locally
+_site/
+.jekyll-cache/
+.sass-cache/

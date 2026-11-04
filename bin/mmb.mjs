@@ -17,7 +17,8 @@ import { renderMap, encodePNG } from '../lib/preview.js';
 import { scatterCanopy, spacingForDensity } from '../lib/canopy.js';
 import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
-import { keySheet, keySolid } from '../lib/joint.js';
+import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
+import { EXAMPLE_SPEC } from '../lib/example.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -26,50 +27,6 @@ const flag = (name, dflt = null) => {
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : (i >= 0 ? true : dflt);
 };
 
-const EXAMPLE = {
-  name: 'glacier-valley',
-  seed: 7,
-  cols: 3,
-  rows: 3,
-  reliefMM: 42,
-  meshMM: 0.9,
-  worldSizeM: 16000,
-  spineHeightM: 1600,
-  spine: [[0.1, 0.85], [0.5, 0.6], [0.9, 0.8]],
-  volcanoes: [{ at: [0.78, 0.22], heightM: 800, baseRadiusM: 2400, breachAzimuthDeg: 210 }],
-  glacier: { cycles: 30 },
-  // Steep at the head, gentler as it goes down. Falls are per tile, in whole
-  // plates, 10 to 50.
-  falls: { '1,2': 40, '1,1': 30, '1,0': 10, '2,1': 20 },
-  // An extra 20 mm of free-fall where the tributary comes off the bench.
-  waterfalls: { '1,1': 20 },
-  rivers: [
-    // Sizes left out are worked out from the inflow and the fall.
-    { name: 'main', sourceEdge: 'N', path: [[1, 2], [1, 1], [1, 0]], sinkEdge: 'S', sinkSize: 'bay', size: 'creek' },
-    { name: 'trib', sourceEdge: 'E', path: [[2, 1], [1, 1]], size: 'creek' },
-  ],
-  // Woods. maxZMM is a treeline and it is the cheapest thing in the file
-  // that makes a mountain read right; maxSlopeDeg keeps them off the cliffs.
-  canopy: [
-    { kind: 'conifer', crownMM: 7, heightMM: 9, density: 0.62,
-      minZMM: 34, maxZMM: 96, thinningMM: 18, maxSlopeDeg: 36 },
-    { kind: 'deciduous', crownMM: 12, heightMM: 7, density: 0.5,
-      maxZMM: 40, thinningMM: 10, maxSlopeDeg: 24 },
-  ],
-  // Water that stands. Hollows the ice left become tarns; `place` puts one
-  // where you want it. Depths are millimetres on the print, and the plan
-  // says how many millilitres of epoxy each tile takes.
-  lakes: { fillHollows: true, depthMM: 5, shoreMM: 10, profile: 'dish' },
-  // Springs go in automatically wherever a river enters the map from
-  // nowhere, which is exactly where a pump has to put the water. 3/8" ID
-  // vinyl is 1/2" outside.
-  fountains: { auto: true, tubeOdMM: 12.7, poolRadiusMM: 16 },
-  // outletZMM 6 rather than the 2 the brief started from. The fall is
-  // unchanged, so every plate count is the same -- but it puts 6 mm of
-  // plate under the channel where it leaves the tile instead of 2, and it
-  // gives a bay mouth room for a bed. See the README on the flow rule.
-  contract: { tileMM: 200, plateMM: 10, outletZMM: 6, edgeLandMM: 22 },
-};
 
 function describe(r) {
   const lines = [];
@@ -126,12 +83,12 @@ if (cmd === 'canopy') {
   writeFileSync(out, encodePNG(rgb, W, n));
   console.log(`\n${out}: ${steps.length} patches, ${EXT} mm square, left to right in the order above.`);
 } else if (cmd === 'example') {
-  process.stdout.write(JSON.stringify(EXAMPLE, null, 2) + '\n');
+  process.stdout.write(JSON.stringify(EXAMPLE_SPEC, null, 2) + '\n');
 } else if (cmd === 'plate') {
   const size = Number(flag('size', 200));
   const thick = Number(flag('thick', 10));
   const out = String(flag('out', 'plate.stl'));
-  writeFileSync(out, plateSTL(size, size, thick));
+  writeFileSync(out, writeSTL(plateSTL(size, size, thick), 'plate'));
   console.log(`${out}: ${size} x ${size} x ${thick} mm plate`);
 } else if (cmd === 'check' || cmd === 'build') {
   const specPath = args[1];
@@ -189,11 +146,7 @@ if (cmd === 'canopy') {
     const byWhy = {};
     for (const k of refused) byWhy[k.why.replace(/[\d.]+/g, 'N')] = (byWhy[k.why.replace(/[\d.]+/g, 'N')] || 0) + 1;
     for (const [why, n] of Object.entries(byWhy)) console.log(`  ${n} half-recess(es) left out: ${why}`);
-    const bothSides = r.keys.filter((k) => {
-      const ta = r.tiles.find((t) => t.spec.col === k.a.col && t.spec.row === k.a.row);
-      const tb = r.tiles.find((t) => t.spec.col === k.b.col && t.spec.row === k.b.row);
-      return ta?.keys.some((x) => x.id === k.id) && tb?.keys.some((x) => x.id === k.id);
-    });
+    const bothSides = usableKeys(r);
     console.log(`  ${bothSides.length} key(s) have both halves and will actually hold. Print that many.`);
     // The seams that get nothing. On a map with much relief this is most of
     // them, and it is better said than discovered on the table.
@@ -260,12 +213,9 @@ if (cmd === 'canopy') {
       const f = join(dir, `${spec.name || 'map'}-${t.label}.stl`);
       writeFileSync(f, writeSTL(t.tris, `${spec.name || 'map'} ${t.label}`));
     }
-    writeFileSync(join(dir, 'plate.stl'), plateSTL(r.contract.tileMM, r.contract.tileMM, r.contract.plateMM));
-    const usable = r.keys.filter((k) => {
-      const ta = r.tiles.find((t) => t.spec.col === k.a.col && t.spec.row === k.a.row);
-      const tb = r.tiles.find((t) => t.spec.col === k.b.col && t.spec.row === k.b.row);
-      return ta?.keys.some((x) => x.id === k.id) && tb?.keys.some((x) => x.id === k.id);
-    }).length;
+    writeFileSync(join(dir, 'plate.stl'),
+      writeSTL(plateSTL(r.contract.tileMM, r.contract.tileMM, r.contract.plateMM), 'plate'));
+    const usable = usableKeys(r).length;
     if (usable) {
       writeFileSync(join(dir, 'keys.stl'), writeSTL(keySheet(usable, r.joint), 'seam keys'));
       writeFileSync(join(dir, 'key-one.stl'), writeSTL(keySolid(r.joint), 'seam key'));
