@@ -217,8 +217,9 @@ child will move it.
 
 The same solver, run on the *design* board in the editor, is how the author
 sees what the set can do before printing: lay out the pieces, drag one, watch
-the badges on the seams change. That is the first thing worth building,
-because it costs nothing and it is the play the brief describes.
+the badges on the seams change. The badges are the first thing the
+editor shows, because they cost nothing and they are the play the brief
+describes.
 
 ## 5. The pipeline, in stages
 
@@ -436,34 +437,78 @@ and every number in the contract agree on it.
 
 ## 9. Phases
 
-Each phase leaves the tests green and the example building the same bytes.
+**The editor comes first.** It is the part most likely to be built as
+something other than what was pictured, and a wrong editor is the costly
+rewrite; a wrong solver is a file. So the first phases put the four stages on
+screen against the generator *as it is today*, with the board solver only as
+far as the badges need it, and the contract work follows behind a UI that can
+already show it. Each phase leaves the tests green and the example map
+building the same bytes.
 
-1. **The board, on paper.** `lib/board.js` with the hydrology fixed point,
-   rotation, riser heights and `mmb board`; the 2 mm floor rule. Tests are the
-   sentences in §4.2 and the table in §3.2. *Done when* a hand-written
-   four-tile board reports a waterfall, a same-level dam that ponds to 12 and
-   overtops a 10 mm rim, and the same dam held by a 20 mm rim.
-2. **The set rule.** Corner heights per design from the class ladder, not
-   from the world; the design window; keyed riser blocks; the 2 × 1 mm lip;
-   the catalogue and `mmb set`. *Done when* two designs cut from
-   opposite ends of the world, rotated, verify flush against each other at
-   `< 1e-6 mm`.
-3. **The staged pipeline.** `plan`/`grow`/`cut`/`refine`/`mesh` with caches
-   in the worker; `edits.js` with replay. *Done when* a brushstroke on one
-   design reruns in well under a second at draft mesh and the whole set still
-   builds the same bytes twice.
-4. **Draw.** The board canvas with badges live from `plan`; the tile canvas
-   writing spec fields; the JSON in a drawer. *Done when* the example map can
-   be drawn from an empty board without touching the JSON.
-5. **Grow.** The three.js viewer from transferred height fields, with water
-   at the board's pond levels, each tile standing on its plates.
-6. **Refine.** Brushes and handles writing `edits`; undo; the rim lock
-   visible. Then the spillway edge, `riser: 'integral'`, and a worker pool.
+1. **The editor shell and Draw.** `app/` becomes the four-stage layout in
+   §6.1 — stage tabs, tool palette, canvas, inspector, status strip, the JSON
+   in a drawer — with the **Draw** stage working: the board canvas with
+   place / rotate / risers / river / fall / spring / drain tools writing the
+   spec, and the tile canvas writing `spine`, `flats`, `volcanoes`,
+   `lakes.place`, `fountains.place`, `corners` and a canopy `region`. Badges
+   on the seams come from a **first `lib/board.js`** that does only what the
+   badges need: rotation, riser heights, and the seam table in §3.2 and §4.2
+   — flow, waterfall, dam-and-ponds-to, overtops, drains, dry, spreads — with
+   tests for each row. The pond backing up through several tiles can wait
+   for phase 4. *Done when* the example map can be drawn from an empty board
+   without opening the JSON, and dragging one tile up a riser flips its
+   seams' badges live.
+2. **Grow.** The three.js viewer (relief's `viewer.js`, geography removed,
+   `three.module.min.js` and `OrbitControls.js` vendored with licences)
+   showing what `buildMap` returns today: each tile on its risers, water as
+   a translucent surface from the `wet` mask, seams, badges floating at the
+   seams. Heights cross the worker boundary as one transferred
+   `Float32Array` per tile. The hillshade stays as the board canvas's
+   background. *Done when* a draft-mesh build is on screen in 3D within a
+   few seconds and orbiting it is smooth.
+3. **Refine, as a shell.** The brush and handle tools on the 3D view
+   writing `edits` ops into the spec, with undo, the rim lock drawn — and the
+   ops **replayed by a first `lib/edits.js`** inside today's `buildMap`,
+   after the carve and before the lakes, followed by the conform. The
+   whole map rebuilds on each stroke at this stage; it is slow and it is
+   correct. *Done when* a raised ridge survives a change of seed and the
+   edge check still reads zero.
+4. **The board, properly.** `lib/board.js` grows the fixed point: ponds that
+   back up, merged ponds, the design checker reporting what a layout wants.
+   `mmb board`. *Done when* the test boards in §4.2 all report as written.
+5. **The set rule.** Corner heights per design from the class ladder, not
+   from the world; the design window; the 2 × 1 mm lip; the 2 mm floor
+   rule; width may narrow; the catalogue and `mmb set`; keyed riser blocks.
+   The Draw palette now holds *designs*, placed many times. *Done when* two
+   designs cut from opposite ends of the world, rotated, verify flush at
+   `< 1e-6 mm`, and the catalogue counts the set's edge types.
+6. **The staged pipeline.** `plan` / `grow` / `cut` / `refine` / `mesh`
+   with caches in the worker, so a brushstroke reruns one design in well
+   under a second; a worker pool after that. Then the spillway edge.
 
-Phase 1 is a week of pure logic with no UI and it is the one that answers
-whether the brief's rules hold in the contract's numbers; it should go first
-even though the UI is the visible ask. Phases 4–6 are the bulk of the work
-and are independent of each other once 3 is in.
+Phases 1–3 touch `lib/` only to add `board.js` and `edits.js`, both small and
+both tested on their own, so the UI can be judged before the generator is
+reorganised under it. If the editor in phase 1 is not the one that was
+pictured, nothing below it has been built yet.
+
+### 9.1 What phase 1 must not do
+
+So that a session building it does not guess:
+
+- **Not a form.** No stack of labelled inputs as the primary surface. The
+  canvas is the editor; the inspector shows the parameters of what is
+  selected and nothing else.
+- **Not a map library.** No Leaflet, no tiles, no lat/lon. A `<canvas>` with
+  a transform, in tile millimetres.
+- **Not a new spec.** Every tool writes the spec the CLI reads, and the JSON
+  drawer shows it changing. The example in `lib/example.js` loads and draws.
+- **Not a bundler.** ES modules from `lib/` and `app/`, served static, as
+  now. Three.js vendored under `lib/vendor/` with its licence, the way
+  relief does it.
+- **Not a framework.** Plain DOM and canvas, as the current app is. One
+  `state` object, one `render()`, tools as objects with `down / move / up`.
+- **Not silent.** Every spec change runs `plan` and redraws the badges; the
+  status strip says what the board would do, in the sentences of §4.2.
 
 ## 10. Decisions
 
