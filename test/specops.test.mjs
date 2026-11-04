@@ -327,3 +327,47 @@ test('a handle drag moves a world feature by its fraction and a lake within its 
   ops.moveFeature(s, 'lake', 0, { x: 900, y: 900 });
   assert.deepEqual(s.lakes.place[0].atMM, [2, 2], 'kept on its tile');
 });
+
+test('edits go with their tiles when the board grows or shrinks on the west or south', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  s.edits = { A1: [{ op: 'raise', path: [[100, 100]], radiusMM: 10, mm: 3 }], B2: [{ op: 'lower', path: [[50, 50]], radiusMM: 10, mm: 2 }] };
+  ops.growBoard(s, 'W');
+  assert.deepEqual(Object.keys(s.edits).sort(), ['B1', 'C2'], 'every tile moved one column east, and its edits with it');
+  ops.shrinkBoard(s, 'W');
+  assert.deepEqual(Object.keys(s.edits).sort(), ['A1', 'B2'], 'and back');
+  ops.shrinkBoard(s, 'W');
+  assert.deepEqual(Object.keys(s.edits), ['A2'], 'the removed column\'s edits go with it; B2\'s come to A2');
+  ops.growBoard(s, 'S');
+  assert.deepEqual(Object.keys(s.edits), ['A3']);
+});
+
+test('a stroke that doubles back, or comes round in a circle, keeps its shape when it is thinned', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  const out = [];
+  for (let x = 300; x <= 360; x += 2) out.push({ x, y: 300 });
+  for (let x = 360; x >= 310; x -= 2) out.push({ x, y: 300 });
+  ops.addStroke(s, board3(s), out, { op: 'raise', radiusMM: 8, mm: 2 });
+  const path = s.edits.B2[0].path;
+  assert.ok(path.some(([x]) => x >= 159), `the turn at 160 is kept: ${JSON.stringify(path)}`);
+  const ring = [];
+  for (let a = 0; a <= 2 * Math.PI + 1e-9; a += Math.PI / 24) ring.push({ x: 300 + 30 * Math.cos(a), y: 300 + 30 * Math.sin(a) });
+  ops.addStroke(s, board3(s), ring, { op: 'smooth', radiusMM: 6 });
+  const circle = s.edits.B2[1].path;
+  assert.ok(circle.length >= 8, `a ring of ${circle.length} points, not a dot`);
+  const far = Math.max(...circle.map(([x, y]) => Math.hypot(x - 100, y - 100)));
+  assert.ok(far > 29, 'still 30 mm round');
+});
+
+test('a world feature dragged on a turned tile goes back through that tile\'s turn', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  s.rot = { '2,0': 2 }; // C1 half way round
+  const v = s.volcanoes[0].at; // in C1
+  const shown = ops.turnPoint(s, ops.toBoard(s, v));
+  const b = ops.toBoard(s, v);
+  assert.deepEqual([Math.round(shown.x), Math.round(shown.y)], [Math.round(1000 - b.x), Math.round(200 - b.y)], 'drawn where its ground has turned to');
+  assert.deepEqual(ops.unturnPoint(s, shown), b, 'and back');
+  ops.moveFeature(s, 'volcano', 0, shown);
+  assert.deepEqual(s.volcanoes[0].at, v, 'dropped where it is drawn, it stays where it was');
+  ops.moveFeature(s, 'spine', 0, { x: 100, y: 100 }); // A1 is not turned
+  assert.deepEqual(s.spine[0], [100 / 600, 100 / 600].map((q) => Math.round(q * 1e6) / 1e6));
+});

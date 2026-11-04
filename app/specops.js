@@ -172,6 +172,11 @@ function shiftRefs(spec, dc, dr) {
     for (const spot of spec[k]?.place || []) if (spot.tile) spot.tile = relabel(spot.tile);
   }
   for (const layer of spec.canopy || []) if (Array.isArray(layer.tiles)) layer.tiles = layer.tiles.map(relabel);
+  if (spec.edits && typeof spec.edits === 'object') {
+    const next = {};
+    for (const [label, list] of Object.entries(spec.edits)) next[relabel(label)] = list;
+    spec.edits = next;
+  }
 }
 
 /**
@@ -296,6 +301,8 @@ export function shrinkBoard(spec, side) {
       .map((l) => (Array.isArray(l.tiles) ? { ...l, tiles: l.tiles.filter((t) => !isGone(t)) } : l))
       .filter((l) => !Array.isArray(l.tiles) || l.tiles.length);
   }
+  // A tile's edits go with it, as its lakes and woods do.
+  if (spec.edits) for (const label of Object.keys(spec.edits)) if (isGone(label)) delete spec.edits[label];
 
   const after = { ...before };
   let dc = 0;
@@ -618,7 +625,20 @@ function intoTile(T, col, row, rot, X, Y) {
   return { x: dx + T / 2, y: dy + T / 2 };
 }
 
-/** Douglas-Peucker on [x, y] pairs: a dragged stroke is a few vertices, not one per mouse move. */
+/** Distance from point p to the segment a-b (to a itself when the segment has no length). */
+function segDist([px, py], [ax, ay], [bx, by]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const L2 = dx * dx + dy * dy;
+  const t = L2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2)) : 0;
+  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+}
+
+/**
+ * Douglas-Peucker on [x, y] pairs: a dragged stroke is a few vertices, not
+ * one per mouse move. Distance is to the SEGMENT, not the line through it,
+ * so a stroke that doubles back, or comes round in a circle, keeps its turn.
+ */
 function thin(pts, tol) {
   if (pts.length < 3) return pts.slice();
   const keep = new Uint8Array(pts.length);
@@ -627,14 +647,10 @@ function thin(pts, tol) {
   const stack = [[0, pts.length - 1]];
   while (stack.length) {
     const [a, b] = stack.pop();
-    const [ax, ay] = pts[a];
-    const dx = pts[b][0] - ax;
-    const dy = pts[b][1] - ay;
-    const L = Math.hypot(dx, dy) || 1;
     let best = -1;
     let bestD = tol;
     for (let i = a + 1; i < b; i++) {
-      const d = Math.abs((pts[i][0] - ax) * dy - (pts[i][1] - ay) * dx) / L;
+      const d = segDist(pts[i], pts[a], pts[b]);
       if (d > bestD) { bestD = d; best = i; }
     }
     if (best >= 0) { keep[best] = 1; stack.push([a, best], [best, b]); }
@@ -688,32 +704,65 @@ export function addStroke(spec, placements, pts, o) {
   return touched;
 }
 
+/** How far a tile is turned, folded into 0..3, as the board reads it. */
+const turnOf = (spec, col, row) => ((Math.round(Number(spec.rot?.[keyOf(col, row)]) || 0) % 4) + 4) % 4;
+
 /**
- * Move something already placed to a board point, as a handle drag in 3D
- * does: a ridge point, a volcano or a flat to its fraction of the world, a
- * lake or a spring to the millimetres of the tile it belongs to -- turned
- * back the way that tile is turned, and kept on it, a hair in from its rim.
+ * A point as it sits on the table, back in the map's own frame: undone
+ * through the turn of the tile it is on. A world feature is drawn where the
+ * ground it shapes has been turned to, so it is dragged back the same way.
+ */
+export function unturnPoint(spec, { x, y }) {
+  const { cols, rows, T } = dims(spec);
+  const col = Math.floor(x / T);
+  const row = Math.floor(y / T);
+  if (col < 0 || row < 0 || col >= cols || row >= rows) return { x, y };
+  const l = intoTile(T, col, row, turnOf(spec, col, row), x, y);
+  return { x: col * T + l.x, y: row * T + l.y };
+}
+
+/**
+ * Move something already placed to a point as it sits on the table, as a
+ * handle drag in 3D does: a ridge point, a volcano or a flat to its fraction
+ * of the world, through the turn of the tile it lands on; a lake or a spring
+ * to the millimetres of the tile it belongs to, turned back the way that
+ * tile is turned, and kept on it, a hair in from its rim.
  */
 export function moveFeature(spec, kind, index, { x, y }) {
   const { T } = dims(spec);
   const clamp = (v) => Math.max(2, Math.min(T - 2, v));
+  const world = () => toWorld(spec, unturnPoint(spec, { x, y }));
   switch (kind) {
-    case 'spine': if (Array.isArray(spec.spine) && spec.spine[index]) spec.spine[index] = toWorld(spec, { x, y }); break;
-    case 'volcano': if (spec.volcanoes?.[index]) spec.volcanoes[index].at = toWorld(spec, { x, y }); break;
-    case 'flat': if (spec.flats?.[index]) spec.flats[index].at = toWorld(spec, { x, y }); break;
+    case 'spine': if (Array.isArray(spec.spine) && spec.spine[index]) spec.spine[index] = world(); break;
+    case 'volcano': if (spec.volcanoes?.[index]) spec.volcanoes[index].at = world(); break;
+    case 'flat': if (spec.flats?.[index]) spec.flats[index].at = world(); break;
     case 'lake':
     case 'springpoint': {
       const spot = (kind === 'lake' ? spec.lakes?.place : spec.fountains?.place)?.[index];
       const p = parseLabel(spot?.tile);
       if (!p) break;
-      const rot = ((Math.round(Number(spec.rot?.[keyOf(p.col, p.row)]) || 0) % 4) + 4) % 4;
-      const l = intoTile(T, p.col, p.row, rot, x, y);
+      const l = intoTile(T, p.col, p.row, turnOf(spec, p.col, p.row), x, y);
       spot.atMM = [r1(clamp(l.x)), r1(clamp(l.y))];
       break;
     }
     default: break;
   }
   return spec;
+}
+
+/**
+ * Where a world feature at a board point (the map's own frame) sits on the
+ * table: on whichever tile it is in, turned as that tile is.
+ */
+export function turnPoint(spec, { x, y }) {
+  const { cols, rows, T } = dims(spec);
+  const col = Math.floor(x / T);
+  const row = Math.floor(y / T);
+  if (col < 0 || row < 0 || col >= cols || row >= rows) return { x, y };
+  let dx = x - (col * T + T / 2);
+  let dy = y - (row * T + T / 2);
+  for (let i = 0; i < turnOf(spec, col, row); i++) [dx, dy] = [dy, -dx];
+  return { x: col * T + T / 2 + dx, y: row * T + T / 2 + dy };
 }
 
 /** Take one edit off a tile, by its place in the list. */

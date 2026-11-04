@@ -888,7 +888,7 @@ npm test
 npm run test:browser      # the editor in Chromium; needs Playwright, skips without it
 ```
 
-221 checks, and 26 steps in the browser. The ones that earn their keep:
+225 checks, and 27 steps in the browser. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -976,7 +976,10 @@ npm run test:browser      # the editor in Chromium; needs Playwright, skips with
   the same way every time, and a world handed in builds the same bytes as
   one grown
 - a stroke on a turned tile is turned back into the tile's own frame, so it
-  stays on the ground it was drawn on
+  stays on the ground it was drawn on; edits follow their tile when the board
+  grows or shrinks, and a stroke that doubles back keeps its shape
+- a click on a handle selects without moving, Escape puts a drag back, and
+  an undo before the regrow takes the stroke off the ground again
 
 ## In the browser
 

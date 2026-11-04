@@ -88,7 +88,9 @@ const HANDLE_LOOK = {
  *   onPick(hit)                 a click that was not the end of an orbit
  *   onStroke(points)            a brushstroke ended: [{ x, y, z }] in board mm
  *   onPlace(hit)                a click with the place tool, on a tile
- *   onHandle(handle, hit, phase)  a handle dragged: phase 'move' or 'end'
+ *   onHandle(handle, at, phase)   a handle: 'move' and 'end' as it is dragged, with
+ *                                 where it is now (as on the table); 'click' if it was
+ *                                 only clicked; 'cancel' if the drag was dropped
  *
  * Throws if WebGL cannot be had; the caller falls back to the 2D board.
  */
@@ -195,7 +197,8 @@ export function createViewer({
   let tool = null;
   let handles = [];
   let stroke = null;   // the brushstroke being drawn: { pts, id }
-  let dragging = null; // the handle being dragged: { h, id, last }
+  let dragging = null; // the handle being dragged: { h, id, last, moved, from, offset }
+  let controlsOffTillUp = false; // a drag dropped mid-press: the orbit waits for the button to come up
   let cursorAt = null; // where the brush cursor is, in board mm
   let hoverHandle = null;
 
@@ -759,7 +762,10 @@ export function createViewer({
     if (tool?.kind === 'select') {
       const hd = hitHandleAt(p.x, p.y);
       if (hd) {
-        dragging = { h: hd, id: ev.pointerId, last: null };
+        // Held where it was grabbed: the handle moves by as much as the
+        // pointer does, rather than jumping its middle under the pointer.
+        const g = hitGround(p.x, p.y);
+        dragging = { h: hd, id: ev.pointerId, last: null, moved: false, from: p, offset: g ? { x: hd.x - g.x, y: hd.y - g.y } : { x: 0, y: 0 } };
         controls.enabled = false;
         canvas.setPointerCapture(ev.pointerId);
         onHover(null, 0, 0, true);
@@ -779,8 +785,13 @@ export function createViewer({
   canvas.addEventListener('pointermove', (ev) => {
     const p = pos(ev);
     if (dragging && ev.pointerId === dragging.id) {
+      if (!dragging.moved && Math.hypot(p.x - dragging.from.x, p.y - dragging.from.y) < 4) return;
+      dragging.moved = true;
       const g = hitGround(p.x, p.y);
-      if (g) { dragging.last = g; onHandle(dragging.h, g, 'move'); }
+      if (g) {
+        dragging.last = { x: g.x + dragging.offset.x, y: g.y + dragging.offset.y };
+        onHandle(dragging.h, dragging.last, 'move');
+      }
       return;
     }
     if (stroke && ev.pointerId === stroke.id) {
@@ -818,12 +829,14 @@ export function createViewer({
   canvas.addEventListener('pointerup', (ev) => {
     pressed.delete(ev.pointerId);
     const p = pos(ev);
+    if (controlsOffTillUp && !pressed.size) { controlsOffTillUp = false; controls.enabled = true; }
     if (dragging && ev.pointerId === dragging.id) {
-      const g = hitGround(p.x, p.y) || dragging.last;
-      const h = dragging.h;
+      const { h, moved, last } = dragging;
       dragging = null;
       controls.enabled = true;
-      onHandle(h, g, 'end');
+      // A press and a release in the same place is a click: it selects, it does not move.
+      if (!moved) onHandle(h, null, 'click');
+      else onHandle(h, last, 'end');
       down = null;
       invalidate();
       return;
@@ -852,7 +865,8 @@ export function createViewer({
     pressed.delete(ev.pointerId);
     down = null;
     if (stroke) { stroke = null; drawTrail(); }
-    if (dragging) { const h = dragging.h; const last = dragging.last; dragging = null; controls.enabled = true; if (last) onHandle(h, last, 'end'); }
+    if (dragging) { const h = dragging.h; dragging = null; controls.enabled = true; onHandle(h, null, 'cancel'); }
+    if (controlsOffTillUp && !pressed.size) { controlsOffTillUp = false; controls.enabled = true; }
   });
   canvas.addEventListener('pointerleave', () => {
     pendingMove = null;
@@ -866,10 +880,50 @@ export function createViewer({
   });
   canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
 
-  /** Drop a stroke or a drag in progress, as Escape does. */
+  /**
+   * Drop a stroke or a drag in progress, as Escape does. A dropped drag is
+   * reported, so whatever it had moved can be put back. The orbit stays off
+   * until the button comes up: it saw the press, and would swing the camera
+   * round from there.
+   */
   function cancelGesture() {
+    down = null; // the release that follows is not a click either
     if (stroke) { stroke = null; drawTrail(); }
-    if (dragging) { dragging = null; controls.enabled = true; invalidate(); }
+    if (dragging) {
+      const h = dragging.h;
+      dragging = null;
+      controlsOffTillUp = pressed.size > 0;
+      if (!controlsOffTillUp) controls.enabled = true;
+      invalidate();
+      onHandle(h, null, 'cancel');
+    }
+  }
+
+  /**
+   * The bare ground near a board point, on the table: where trees stand, the
+   * height of the nearest cell that is not under a crown, so a flatten begun
+   * in a wood levels the ground, not the treetops.
+   */
+  function bareAt(x, y, searchMM = 10) {
+    const g = groundAt(x, y);
+    if (!g) return null;
+    const h = g.t.h;
+    const i0 = Math.round(g.local.x / h.step);
+    const j0 = Math.round(g.local.y / h.step);
+    const k0 = Math.min(h.ny - 1, Math.max(0, j0)) * h.nx + Math.min(h.nx - 1, Math.max(0, i0));
+    if (h.kind[k0] !== H.WOOD) return g.z;
+    const r = Math.ceil(searchMM / h.step);
+    let best = null;
+    let bestD = Infinity;
+    for (let j = Math.max(0, j0 - r); j <= Math.min(h.ny - 1, j0 + r); j++) {
+      for (let i = Math.max(0, i0 - r); i <= Math.min(h.nx - 1, i0 + r); i++) {
+        const k = j * h.nx + i;
+        if (h.kind[k] === H.WOOD) continue;
+        const d = Math.hypot(i - i0, j - j0);
+        if (d < bestD) { bestD = d; best = h.heights[k]; }
+      }
+    }
+    return best === null ? g.z : h.standMM + best;
   }
 
   /* --------------------------------------------------------------- loop */
@@ -979,6 +1033,7 @@ export function createViewer({
     },
     /** The top of the ground at a board point, on whichever tile is there, turned as it is. */
     heightAt: (x, y) => groundAt(x, y)?.z ?? null,
+    bareAt,
     /** For the browser test: what is drawn, and how fast. */
     stats: () => ({
       frames,

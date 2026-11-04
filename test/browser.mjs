@@ -629,6 +629,52 @@ await step('a lake placed in Refine and dragged by its handle, then a planted wo
   assert.ok(await worst() < 1e-6);
 });
 
+await step('a click on a handle selects it, Escape puts a drag back, and an undo before the regrow takes a stroke off the ground', async () => {
+  await refineTool('select', 'select');
+  await lookDown(100, 100);
+  await page.waitForTimeout(150);
+  const lakes = (await spec()).lakes.place;
+  const i = lakes.length - 1;
+  const was = lakes[i].atMM;
+  const history = await page.evaluate(() => window.mmb.state.history.length);
+  const b = await box3d();
+  let handle = (await stats()).handles.find((x) => x.key === `lake:${i}`);
+  // A click: it is selected, and it stays where it is.
+  await page.mouse.click(b.x + handle.x + 2, b.y + handle.y + 1);
+  await page.waitForTimeout(150);
+  assert.deepEqual(await page.evaluate(() => window.mmb.state.selection), { type: 'lake', index: i });
+  assert.deepEqual((await spec()).lakes.place[i].atMM, was, 'a click does not move it');
+  assert.equal(await page.evaluate(() => window.mmb.state.history.length), history, 'and is not an edit');
+  // A drag dropped with Escape: back where it was, and the next change still grows.
+  handle = (await stats()).handles.find((x) => x.key === `lake:${i}`);
+  await page.mouse.move(b.x + handle.x, b.y + handle.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x + handle.x + 40, b.y + handle.y + 30, { steps: 5 });
+  assert.notDeepEqual((await spec()).lakes.place[i].atMM, was, 'it moves while dragged');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  assert.deepEqual((await spec()).lakes.place[i].atMM, was, 'Escape put it back');
+  assert.equal(await page.evaluate(() => window.mmb.state.grown.stale), false);
+  // A stroke, undone at once, before the regrow has started.
+  await refineTool('raise', 'brush');
+  await lookDown(500, 300);
+  const z0 = await page.evaluate(() => window.mmb.viewer().heightAt(500, 300));
+  await strokeAcross([470, 300], [530, 300], 8);
+  const z1 = await page.evaluate(() => window.mmb.viewer().heightAt(500, 300));
+  assert.ok(z1 > z0 + 4, 'shown at once');
+  await page.locator('#view3d').focus();
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(900);
+  assert.equal(await page.evaluate(() => window.mmb.state.busy), null, 'nothing to grow: the spec is what was grown');
+  assert.equal((await spec()).edits?.C2, undefined);
+  assert.equal(await page.evaluate(() => window.mmb.viewer().heightAt(500, 300)), z0, 'and the ground is back as it was grown');
+  // The regrow is not stuck: a real change still grows.
+  await strokeAcross([470, 300], [530, 300], 8);
+  await settled();
+  assert.equal((await spec()).edits.C2.length, 1);
+});
+
 await step('nothing went to the console', async () => {
   assert.deepEqual(errors, []);
 });

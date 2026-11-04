@@ -204,3 +204,18 @@ test('edits for a tile the map does not have are kept and said', () => {
   const bad = buildMap(base(2, { A1: [{ op: 'bulldoze', at: [100, 100], radiusMM: 10 }] }));
   assert.ok(bad.problems.some((p) => p.kind === 'edit' && /bulldoze/.test(p.message)));
 });
+
+test('tree edits keep their order: a wood planted after a clearing grows, one cleared after planting does not', () => {
+  const plant = { op: 'plant', path: [[60, 150], [140, 150]], radiusMM: 25, kind: 'conifer' };
+  const clear = { op: 'clear', path: [[60, 150], [140, 150]], radiusMM: 30 };
+  const trees = (edits) => tileOf(buildMap(base(5, { B1: edits })), 'B1').trees;
+  const planted = trees([plant]);
+  assert.ok(planted > 5, `${planted} trees planted`);
+  assert.equal(trees([plant, clear]), 0, 'cleared after it was planted');
+  assert.equal(trees([clear, plant]), planted, 'planted after the clearing: the clearing was earlier');
+  // A planted wood's trees come from its own stroke, not its place in the list.
+  const raise = { op: 'raise', path: [[30, 30]], radiusMM: 8, mm: 1 };
+  const a = tileOf(buildMap(base(5, { B1: [raise, plant] })), 'B1').woods.find((w) => w.planted);
+  const b = tileOf(buildMap(base(5, { B1: [plant] })), 'B1').woods.find((w) => w.planted);
+  assert.equal(a.trees, b.trees);
+});

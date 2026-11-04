@@ -12,7 +12,7 @@
 // the board says it stands now: a turn is play and does not need a regrow.
 
 import { EXAMPLE_SPEC } from '../lib/example.js';
-import { plan as planBoard, worldKey } from '../lib/board.js';
+import { plan as planBoard, worldKey, normRot } from '../lib/board.js';
 import { toRGBA } from '../lib/shade.js';
 import * as ops from './specops.js';
 import { readTheme, makeCamera, zoomAbout } from './view.js';
@@ -20,7 +20,7 @@ import { boardBox, drawBoard, hitBoard } from './board.js';
 import { tileBox, drawTileView, drawPreview } from './tilecanvas.js';
 import { handles, hitHandle, localToBoard } from './features.js';
 import { BOARD_TOOLS, TILE_TOOLS, BOARD_GROUPS, TILE_GROUPS, REFINE_TOOLS, REFINE_GROUPS } from './tools.js';
-import { applyGroundEdits, GROUND_OPS, EDIT_DEFAULTS } from '../lib/edits.js';
+import { applyGroundEdits, editsFor, GROUND_OPS, EDIT_DEFAULTS } from '../lib/edits.js';
 import { renderInspector } from './inspector.js';
 import { reportHTML, downloadsHTML, fmt, bytes, esc } from './report.js';
 
@@ -274,9 +274,12 @@ function onBuild(msg) {
     return;
   }
   if (msg.type === 'error') {
+    if (state.busy?.mode === 'build' || state.busy?.mode === 'check') {
+      state.buildFailed = { message: msg.message, key: printKey(state.busy.specAt || state.spec) };
+    }
     state.busy = null;
     say(msg.message, 'err');
-    invalidate('left', 'status');
+    invalidate('left', 'status', 'stage');
     return;
   }
   if (msg.type === 'report') {
@@ -287,14 +290,18 @@ function onBuild(msg) {
     const rowsImg = msg.report.grid.rows;
     const cells = new Map(msg.report.tiles.map((t) => [ops.keyOf(t.col, t.row), { sx: t.col * pxPerTile, sy: (rowsImg - 1 - t.row) * pxPerTile, size: pxPerTile }]));
     const specAt = state.busy?.specAt || state.spec;
+    // The heights follow this message; until they land, the 3D view keeps
+    // showing the last ones rather than dropping to the board for a frame.
+    const shownUntilHeights = state.grown?.tiles3d ?? null;
     state.grown = {
       image: img, cells, report: msg.report, files: msg.files, elapsedMS: msg.elapsedMS, mode: msg.report.mode,
       printKey: printKey(specAt), stale: false, filesGone: false,
       // What the 3D view needs to say what the water does on THESE tiles,
       // whatever the spec has become since: the spec they were grown from,
       // and the ground they were cut out of. The heights follow.
-      id: msg.id, spec: specAt, world: msg.world, tiles3d: null,
+      id: msg.id, spec: specAt, world: msg.world, tiles3d: shownUntilHeights,
     };
+    state.buildFailed = null;
     if (msg.report.mode !== 'check') state.world = { field: msg.world, key: worldKey(specAt), iceKey: msg.worldKey, source: 'grown' };
     state.busy = null;
     replan();
@@ -308,6 +315,7 @@ function onBuild(msg) {
   if (msg.type === 'heights') {
     if (!state.grown || state.grown.id !== msg.id) return;
     state.grown.tiles3d = { contract: msg.contract, tiles: msg.tiles, at: performance.now() };
+    repreview(state.grown);
     invalidate('canvas', 'stage', 'left');
     return;
   }
@@ -454,7 +462,8 @@ function handles3d() {
   const world = (list, kind, at) => (list || []).forEach((x, i) => {
     const p = at(x);
     if (!Array.isArray(p)) return;
-    const b = ops.toBoard(s, p);
+    // Where the ground it shapes sits on the table: turned with its tile.
+    const b = ops.turnPoint(s, ops.toBoard(s, p));
     out.push({ key: `${kind}:${i}`, kind, index: i, x: b.x, y: b.y });
   });
   world(s.spine, 'spine', (p) => p);
@@ -463,7 +472,7 @@ function handles3d() {
   const onTile = (list, kind) => (list || []).forEach((spot, i) => {
     const p = ops.parseLabel(spot?.tile);
     if (!p || !Array.isArray(spot.atMM)) return;
-    const b = localToBoard(T, p.col, p.row, ((Number(s.rot?.[ops.keyOf(p.col, p.row)]) || 0) % 4 + 4) % 4, spot.atMM[0], spot.atMM[1]);
+    const b = localToBoard(T, p.col, p.row, normRot(s.rot?.[ops.keyOf(p.col, p.row)]), spot.atMM[0], spot.atMM[1]);
     out.push({ key: `${kind}:${i}`, kind, index: i, x: b.x, y: b.y });
   });
   onTile(s.lakes?.place, 'lake');
@@ -472,22 +481,53 @@ function handles3d() {
 }
 
 /**
- * Show a stroke on the ground at once, on the heights as they stand, before
- * the build has replayed it: only the ground ops can be, the trees and the
- * lakes wait for the regrow.
+ * Show edits on the ground at once, on the heights as they stand, before the
+ * build has replayed them: only the ground ops can be, the trees and the
+ * lakes wait for the regrow. The heights as grown are kept, so if the spec
+ * goes back to what was grown -- an undo before the regrow -- they go back.
  */
+function previewOps(g, label, list) {
+  const h = g?.tiles3d?.tiles.find((x) => x.label === label);
+  const opsHere = list.filter((op) => GROUND_OPS.includes(op?.op));
+  if (!h || !opsHere.length) return;
+  const values = Float32Array.from(h.heights);
+  applyGroundEdits({ nx: h.nx, ny: h.ny, step: h.step, values }, opsHere, { rimLockMM: rimLock() });
+  if (!h.grownHeights) h.grownHeights = h.heights;
+  h.heights = values;
+  g.previewed = true;
+  viewer?.updateHeights(h.id, values);
+}
+
 function preview3d(labels) {
-  const g = state.grown;
-  if (!g?.tiles3d || !viewer) return;
   for (const label of labels) {
-    const h = g.tiles3d.tiles.find((x) => x.label === label);
     const list = state.spec.edits?.[label] || [];
-    const op = list[list.length - 1];
-    if (!h || !op || !GROUND_OPS.includes(op.op)) continue;
-    const values = Float32Array.from(h.heights);
-    applyGroundEdits({ nx: h.nx, ny: h.ny, step: h.step, values }, [op], { rimLockMM: rimLock() });
-    h.heights = values;
-    viewer.updateHeights(h.id, values);
+    previewOps(state.grown, label, list.slice(-1));
+  }
+}
+
+/** The previews taken off: the ground as it was grown, because the spec is what was grown. */
+function unpreview(g) {
+  for (const h of g?.tiles3d?.tiles || []) {
+    if (!h.grownHeights) continue;
+    h.heights = h.grownHeights;
+    delete h.grownHeights;
+    viewer?.updateHeights(h.id, h.heights);
+  }
+  g.previewed = false;
+}
+
+/**
+ * New heights have landed from a build that started before the last few
+ * strokes: show those strokes on them too, so a stroke made during a regrow
+ * does not vanish until the next one. Only edits added on the end of a
+ * tile's list can be laid on like that; anything else waits for the build.
+ */
+function repreview(g) {
+  for (const [label, now] of Object.entries(state.spec.edits || {})) {
+    if (!Array.isArray(now)) continue;
+    const then = editsFor(g.spec, label);
+    if (now.length <= then.length || JSON.stringify(now.slice(0, then.length)) !== JSON.stringify(then)) continue;
+    previewOps(g, label, now.slice(then.length));
   }
 }
 
@@ -499,7 +539,9 @@ function stroke3d(pts) {
   let touched = [];
   commit((s) => {
     touched = ops.addStroke(s, placements, pts, {
-      op: t.id, radiusMM: p.brushWidth / 2, mm: p.brushMM, kind: p.plantKind, toWorldMM: pts[0].z,
+      op: t.id, radiusMM: p.brushWidth / 2, mm: p.brushMM, kind: p.plantKind,
+      // To the ground where it began -- the ground, not the top of a tree on it.
+      toWorldMM: viewer?.bareAt(pts[0].x, pts[0].y) ?? pts[0].z,
     });
     ops.tidy(s);
   }, `${t.label.toLowerCase()} by hand`);
@@ -520,18 +562,25 @@ function place3d(hit) {
 }
 
 const HANDLE_NAMES = { spine: 'ridge point', volcano: 'volcano', flat: 'flat', lake: 'lake', springpoint: 'spring' };
-function handle3d(hd, hit, phase) {
-  if (hit) live((s) => ops.moveFeature(s, hd.kind, hd.index, hit));
+function handle3d(hd, at, phase) {
+  // A click on a handle selects what it moves, as the 2D select tool does.
+  if (phase === 'click') { select(hd.kind === 'spine' ? { type: 'spine' } : { type: hd.kind, index: hd.index }); return; }
+  // A drag dropped half way, by Escape or a change of tool: put it back.
+  if (phase === 'cancel') { cancelLive(); maybeRegrow(); return; }
+  if (at) live((s) => ops.moveFeature(s, hd.kind, hd.index, at));
   if (phase === 'end') end(`move a ${HANDLE_NAMES[hd.kind] || hd.kind}`);
 }
 
 /** In Refine, the 3D view keeps up with the spec: grow again once it settles. */
 let regrowTimer = 0;
+const failedHere = () => state.buildFailed && state.buildFailed.key === printKey(state.spec);
 function maybeRegrow() {
   clearTimeout(regrowTimer);
-  if (state.stage !== 'refine' || !state.grown?.stale || !workersOK) return;
+  const g = state.grown;
+  if (g?.previewed && !g.stale) unpreview(g);
+  if (state.stage !== 'refine' || !g?.stale || !workersOK || failedHere()) return;
   regrowTimer = setTimeout(() => {
-    if (state.stage === 'refine' && state.grown?.stale && !state.busy && liveBase === null) grow('build');
+    if (state.stage === 'refine' && state.grown?.stale && !state.busy && liveBase === null && !failedHere()) grow('build');
   }, 350);
 }
 
@@ -869,7 +918,9 @@ function refineLeft() {
   out.push(h('div', { class: 'group' },
     b ? [h('p', { class: 'busy' }, `${b.label} — ${((Date.now() - b.startedAt) / 1000).toFixed(1)} s`),
       h('ol', { class: 'progress' }, b.progress.map((m, i) => h('li', { class: i === b.progress.length - 1 ? 'now' : null }, m)))]
-      : h('p', { class: g.stale ? 'warn-line' : 'hint' }, g.stale ? 'Growing again with the last change…' : `Grown with ${n ? `all ${n} edit${n > 1 ? 's' : ''}` : 'no edits yet'}.`),
+      : failedHere() ? [h('p', { class: 'err-line' }, `The last build failed: ${state.buildFailed.message}`),
+        h('button', { type: 'button', onclick: () => grow('build') }, 'Try again')]
+        : h('p', { class: g.stale ? 'warn-line' : 'hint' }, g.stale ? 'Growing again with the last change…' : `Grown with ${n ? `all ${n} edit${n > 1 ? 's' : ''}` : 'no edits yet'}.`),
     h('p', { class: 'hint' }, `Every change here grows the map again, keeping the ground and the ice from last time: ${again < 2 ? 'about a second' : `about ${Math.round(again)} s`} at this mesh.${(Number(state.spec.meshMM) || 0.8) < 2.5 ? ' Refine on the draft mesh and print on a finer one: the edits are the same at any mesh.' : ''}`),
     h('p', { class: 'hint' }, 'Edits are kept as strokes, not as the ground they changed, so a new seed or a new climate keeps every one. Select a tile to see its list.')));
   return out;

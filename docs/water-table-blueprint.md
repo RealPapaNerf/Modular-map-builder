@@ -752,16 +752,22 @@ Decisions the build had to take:
    Smooth eases towards a box average read from a frozen copy, so the order the
    cells are visited in does not matter. Flatten goes to `toMM`. The tool
    writes the height *on the table* where the stroke began, less each tile's
-   riser, so a terrace across two tiles is one height. Unknown ops are reported
+   riser, so a terrace across two tiles is one height. A stroke begun in a
+   wood takes the bare ground beside the trees, not their tops. Unknown ops are reported
    and skipped, never guessed at.
 4. **The woods are edits too, replayed where the woods are planted.**
-   `clear` is a `where` filter on every wood on the tile. `plant` is a wood
+   `clear` is a `where` filter on the map's woods and on every wood planted
+   before it; a wood planted after a clearing grows in it. `plant` is a wood
    of its own, kept off canopy already there, with its seed taken from the
-   stroke, so it keeps its trees whatever the map's seed.
+   stroke itself, so it keeps its trees whatever the map's seed and whatever
+   comes off the list before it.
 5. **A lake and a spring stay the fields they are.** The Refine tools write
    the same `lakes.place` / `fountains.place` entries the tile view's tools
    do; the generator already reads them. The handles drag those, and
-   volcanoes, flats and ridge points, along the ground.
+   volcanoes, flats and ridge points, along the ground, held where they were
+   grabbed. A click on a handle selects it without moving it; Escape puts a
+   drag back. A volcano, a flat or a ridge point is drawn where the ground it
+   shapes has been turned to, and dragged back through that turn.
 6. **The whole map rebuilds on every change, but not the ice.** The ground is
    a pure function of `worldKey(spec, { ice: true })`, so the worker keeps the
    last one and `buildMap` takes it when the key matches. A stroke then costs
@@ -772,16 +778,29 @@ Decisions the build had to take:
 7. **A stroke shows at once.** The same `applyGroundEdits` runs on the
    heights the view is showing, so the ground moves when the pointer lets go.
    The regrow then replaces it with the real replay; trees, lakes and springs
-   wait for that. In Refine a change of any kind grows the map again once
-   things settle (a drag counts once it ends), and a change made during a
-   build is grown next.
+   wait for that. The heights as grown are kept, so an undo before the regrow
+   takes the stroke off again with nothing to build. A stroke made during a
+   build is laid onto the heights that build brings back. In Refine a change
+   of any kind grows the map again once things settle (a drag counts once it
+   ends). A build that failed is said, and that spec is not tried again until
+   it changes or is asked for.
 8. **The brush follows the ground the pointer is over.** In perspective that
    can be the far wall of a gorge, which is what the cursor shows, so it is
    what happens. Left paints, right orbits, Shift-right pans; on a touch
    screen one finger paints and two turn and zoom.
 9. **Undo is the editor's undo,** which is the spec before the stroke. The
    inspector lists a tile's edits in the order they are replayed, each
-   removable, with Clear all.
+   removable, with Clear all. A tile's edits go with it when the board grows
+   or shrinks, as its lakes and woods do.
+
+An independent review of the first cut found seven bugs, each now a test.
+A drag dropped with Escape left the edit half made and stopped every regrow
+after it. An undo before the regrow left the stroke on the ground. A click on
+a handle nudged it. Edits stayed on their old labels when a column was added
+on the west, so they landed on the next tile. Thinning a stroke measured to
+the line rather than the segment, so a stroke that doubled back was cut to a
+stub. A clearing stopped woods planted after it. And world features' handles
+ignored the tile's turn.
 
 Left for later: rerunning only the edited design (phase 6), and strokes
 drawn on the 2D board.
