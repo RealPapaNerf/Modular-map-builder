@@ -27,6 +27,8 @@ kramdown:
 
 # Kept out of the published site: the CLI, the tests, the packaging. lib/ and
 # app/ are deliberately NOT excluded — the app imports the library at runtime.
+# LICENSE is published too, because the README links to it relatively and that
+# link has to resolve on the site as well as on GitHub.
 exclude:
   - bin/
   - test/
@@ -39,4 +41,3 @@ exclude:
   - vendor/
   - .gitignore
   - CLAUDE.md
-  - LICENSE

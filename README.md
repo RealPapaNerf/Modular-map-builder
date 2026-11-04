@@ -991,4 +991,4 @@ Under-tuned: glacial U-widening. `valleyForm` is the metric and `elaM` /
 
 ## Licence
 
-MIT.
+MIT. See [LICENSE](LICENSE).
