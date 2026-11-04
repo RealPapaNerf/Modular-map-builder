@@ -54,6 +54,8 @@ const r0 = (v) => Math.round(v);
 /** What a seam's badge looks like. */
 export function badgeStyle(s, th) {
   const wet = s.wet;
+  // A pond that went out backwards, through an inlet's notch.
+  if (s.backFrom && s.kind === 'dry') return { text: s.backTo ? '\u21a9 spills' : '\u21a9 tray', fill: th.water, ink: '#fff' };
   switch (s.kind) {
     case 'flow': return { shape: 'dot', fill: wet ? th.water : th.panel, stroke: wet ? null : th.dry, ink: wet ? '#fff' : th.dry, arrow: true };
     case 'waterfall': return { text: `↓${r0(s.dropMM)}`, fill: wet ? th.fall : th.panel, stroke: wet ? th.water : th.dry, ink: wet ? '#1b1d1f' : th.dry };

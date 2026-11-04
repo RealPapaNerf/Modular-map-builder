@@ -885,7 +885,7 @@ npm test
 npm run test:browser      # the editor in Chromium; needs Playwright, skips without it
 ```
 
-180 checks, and 16 steps in the browser. The ones that earn their keep:
+190 checks, and 16 steps in the browser. The ones that earn their keep:
 
 - every finished tile honours its edge contract **exactly** (< 1e-6 mm)
 - every finished tile is a **closed solid** — no unpaired edges, no overused
@@ -989,6 +989,7 @@ holds at 40 mm."* Drag a tile up a riser and the badges change while you drag.
 | amber `↘12` | the river pours down onto lower ground |
 | purple `⇄` | two rivers sent at each other |
 | `tray` | it drains off the board, into the tray |
+| `↩ tray`, `↩ spills` | the pond rose to an inlet's floor and spilled back out through its notch |
 | teal ring | a spring: where the pump's water comes up |
 | grey hollow | a dry bed or a dry inlet — nothing feeds it, which is fine |
 | amber `⋔` beside one | wide into narrow: the channel takes what it can and the rest spreads over the banks |

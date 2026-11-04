@@ -207,3 +207,56 @@ test('the JSON drawer\'s formatting reads like the example and parses back to th
   const drawn = ops.formatSpec(drawTheExample());
   assert.equal(drawn, text, 'and the drawn one prints the same, key for key');
 });
+
+test('a stroke through an exact grid corner does not run off along the ray', () => {
+  const s = { cols: 3, rows: 3 };
+  const cells = ops.strokeCells(s, [{ x: 300, y: 500 }, { x: 400, y: 200 }]);
+  assert.ok(cells.length < 8, `${cells.length} cells`);
+  assert.deepEqual(ops.strokeToRiver(s, [{ x: 300, y: 500 }, { x: 400, y: 200 }]),
+    { path: [[1, 2], [1, 1], [2, 1]], sourceEdge: null, sinkEdge: null });
+});
+
+test('in and straight back out of the same side is not a river', () => {
+  assert.equal(ops.strokeToRiver({ cols: 3, rows: 3 }, [{ x: -50, y: 100 }, { x: 100, y: 100 }, { x: -50, y: 110 }]), null);
+});
+
+test('toggling one spring leaves every other spring entry as it was', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  s.fountains = { auto: false, place: [{ tile: 'B3', edge: 'N', poolRadiusMM: 22 }] };
+  ops.toggleSpring(s, 'C2', 'E');
+  assert.deepEqual(s.fountains, { auto: false, place: [{ tile: 'B3', edge: 'N', poolRadiusMM: 22 }, { tile: 'C2', edge: 'E' }] },
+    'not collapsed to auto, which would lose the 22 mm pool');
+  // A spring on a port that is not an open inlet: shown, built, and still removable.
+  const t = structuredClone(EXAMPLE_SPEC);
+  t.fountains = { auto: false, place: [{ tile: 'B2', edge: 'N' }] };
+  ops.toggleSpring(t, 'B3', 'N');
+  ops.toggleSpring(t, 'C2', 'E');
+  assert.deepEqual(t.fountains, { auto: true, place: [{ tile: 'B2', edge: 'N' }] }, 'other springs never touch it');
+  ops.toggleSpring(t, 'B2', 'N');
+  assert.deepEqual(t.fountains, { auto: true }, 'and it comes off when asked');
+});
+
+test('growing the board past a river\'s open end carries the river out to the new edge', () => {
+  const kinds = (sp) => plan(sp).sentences.map((x) => x.kind).join();
+  const south = structuredClone(EXAMPLE_SPEC);
+  ops.growBoard(south, 'S');
+  assert.deepEqual(south.rivers[0].path, [[1, 3], [1, 2], [1, 1], [1, 0]]);
+  assert.equal(south.rivers[0].sinkEdge, 'S');
+  assert.equal(kinds(south), 'spring,waterfall,flow,flow,flow,drains');
+  const north = structuredClone(EXAMPLE_SPEC);
+  ops.growBoard(north, 'N');
+  assert.deepEqual(north.rivers[0].path, [[1, 3], [1, 2], [1, 1], [1, 0]]);
+  assert.equal(north.rivers[0].sourceEdge, 'N');
+  assert.ok(!plan(north).sentences.some((x) => x.kind === 'dry'), 'the spring moves out to the new edge with it');
+  const east = structuredClone(EXAMPLE_SPEC);
+  ops.growBoard(east, 'E');
+  assert.deepEqual(east.rivers[1].path, [[3, 1], [2, 1], [1, 1]]);
+});
+
+test('setting a tile to the height it already has does not move its neighbours', () => {
+  const s = { cols: 2, rows: 2, levels: { '0,0': 3, '1,0': 3, '0,1': 0 } };
+  const before = plan(s).levels.get('1,1');
+  ops.setRiser(s, 1, 0, 3);
+  assert.deepEqual(s.levels, { '0,0': 3, '1,0': 3, '0,1': 0 }, 'B1\'s key stays: B2 takes its level from it');
+  assert.equal(plan(s).levels.get('1,1'), before);
+});

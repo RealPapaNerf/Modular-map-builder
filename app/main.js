@@ -626,7 +626,7 @@ const COUNT_ORDER = [
   ['spring', 'spring', '--c-spring'], ['flow', 'flow', '--c-water'], ['waterfall', 'waterfall', '--c-water'],
   ['dam', 'dam', '--c-dam'], ['blocked', 'bank', '--c-dam'], ['overtops', 'overtops', '--c-dam'],
   ['spills', 'spills', '--c-spill'], ['spreads', 'spreads', '--c-spill'], ['head-on', 'head on', '--c-headon'],
-  ['drains', 'drain', '--c-water'], ['dry', 'dry', '--c-dry'], ['cliff', 'cliff', '--c-cliff'], ['ponds', 'ponding', '--c-water'],
+  ['drains', 'drain', '--c-water'], ['back', 'spills back', '--c-water'], ['dry', 'dry', '--c-dry'], ['cliff', 'cliff', '--c-cliff'], ['ponds', 'ponding', '--c-water'],
 ];
 const RIMS = {
   datum: 'rims at the land datum: no ground yet',
@@ -644,7 +644,7 @@ function renderStatus() {
     c.style.setProperty('--dot', `var(${color})`);
     c.title = `${n[k]} ${label}`;
     const i = document.createElement('i');
-    c.append(i, `${n[k]} ${label}${n[k] > 1 && !['dry', 'spreads', 'overtops', 'ponding', 'head on'].includes(label) ? 's' : ''}`);
+    c.append(i, `${n[k]} ${label}${n[k] > 1 && !['dry', 'spreads', 'overtops', 'ponding', 'head on', 'spills back'].includes(label) ? 's' : ''}`);
     return c;
   }));
   const parts = [];

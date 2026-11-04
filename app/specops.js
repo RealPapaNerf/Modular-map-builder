@@ -120,10 +120,20 @@ export const setRot = (spec, col, row, rot) => setCell(spec, 'rot', col, row, ((
  */
 export function setRiser(spec, col, row, plates) {
   const k = keyOf(col, row);
-  const without = structuredClone(spec);
-  if (without.levels) delete without.levels[k];
-  const auto = boardFromSpec(without).levels.get(k) ?? 0;
-  return setLevel(spec, col, row, plates === auto ? null : Math.max(0, Math.round(plates)));
+  setLevel(spec, col, row, Math.max(0, Math.round(plates)));
+  // Dry tiles take their level from their neighbours, so a key can matter to
+  // a tile next door even when it matches what this one would get anyway.
+  // It goes only if the whole board stands the same without it.
+  const withKey = boardFromSpec(spec).levels;
+  const trial = structuredClone(spec);
+  delete trial.levels[k];
+  tidy(trial);
+  const without = boardFromSpec(trial).levels;
+  if ([...withKey].every(([kk, v]) => without.get(kk) === v)) {
+    delete spec.levels[k];
+    tidy(spec);
+  }
+  return spec;
 }
 
 /** Lift or drop one lattice corner by `mm`, keyed 'cc,rr'. Toggles when asked twice. */
@@ -187,6 +197,20 @@ export function growBoard(spec, side) {
   refit(spec, before, after, dc, dr);
   spec.cols = after.cols;
   spec.rows = after.rows;
+  // A river that came in from, or drained off, this side would now face the
+  // new tiles' land. Carry it on into the new strip, so it still comes in
+  // from (or drains off) the edge of the board, as it did.
+  const [sc, sr] = STEP[side];
+  const inStrip = ([c, w]) => (side === 'E' ? c === after.cols - 1 : side === 'W' ? c === 0 : side === 'N' ? w === after.rows - 1 : w === 0);
+  for (const r of spec.rivers || []) {
+    const path = r.path || [];
+    if (!path.length) continue;
+    const first = path[0];
+    const last = path[path.length - 1];
+    if (r.sinkEdge === side && inStrip([last[0] + sc, last[1] + sr])) path.push([last[0] + sc, last[1] + sr]);
+    if (r.sourceEdge === side && inStrip([first[0] + sc, first[1] + sr])) path.unshift([first[0] + sc, first[1] + sr]);
+    r.path = path;
+  }
   return tidy(spec);
 }
 
@@ -312,14 +336,17 @@ export function strokeCells(spec, pts) {
     const dy = y1 - y;
     const sx = Math.sign(dx);
     const sy = Math.sign(dy);
-    // Amanatides-Woo: step whichever boundary the segment reaches first.
+    // Amanatides-Woo: step whichever boundary the segment reaches first --
+    // but only along an axis that still has somewhere to go. A point exactly
+    // on a grid corner ties the two, and stepping the one already done sends
+    // the walk off along the ray and never back.
     let tMaxX = sx ? ((sx > 0 ? c + 1 : c) - x) / dx : Infinity;
     let tMaxY = sy ? ((sy > 0 ? w + 1 : w) - y) / dy : Infinity;
     const tDX = sx ? sx / dx : Infinity;
     const tDY = sy ? sy / dy : Infinity;
-    let guard = 0;
-    while ((c !== c1 || w !== w1) && guard++ < 1000) {
-      if (tMaxX < tMaxY) { c += sx; tMaxX += tDX; } else { w += sy; tMaxY += tDY; }
+    while (c !== c1 || w !== w1) {
+      const stepX = c === c1 ? false : w === w1 ? true : tMaxX <= tMaxY;
+      if (stepX) { c += Math.sign(c1 - c); tMaxX += tDX; } else { w += Math.sign(w1 - w); tMaxY += tDY; }
       push(c, w);
     }
     x = x1; y = y1;
@@ -366,6 +393,8 @@ export function strokeToRiver(spec, pts) {
   }
   if (!path.length) return null;
   if (path.length === 1 && !sourceEdge && !sinkEdge) return null;
+  // In and straight back out of the same side: the drain would overwrite the inlet.
+  if (path.length === 1 && sourceEdge && sourceEdge === sinkEdge) return null;
   return { path, sourceEdge, sinkEdge };
 }
 
@@ -433,19 +462,40 @@ export function springOn(spec, label, edge) {
 }
 
 /**
- * Put a spring on an open inlet, or take it off.
+ * Put a spring on a river's open end, or take it off.
  *
- * Written in the fewest words the build reads: `auto` when every open inlet
- * has one, explicit ports when only some do. A spring placed at a point
- * inside a tile is left alone.
+ * Only the port asked about changes. A spring placed by hand on a port --
+ * with its own pool size, say, or on a port that is no longer an open
+ * inlet -- is left exactly as it is. The short form, `auto`, is used only
+ * when every open inlet has a plain spring and nothing would be lost by it.
  */
 export function toggleSpring(spec, label, edge) {
   const open = openInlets(spec);
-  const key = (t, e) => `${t}:${e}`;
   const isOpen = open.some((o) => o.tile === label && o.edge === edge);
+  const f = spec.fountains ? { ...spec.fountains } : null;
+  const place = [...(f?.place || [])];
+  const at = (t, e) => place.findIndex((x) => x.tile === t && x.edge === e && !x.atMM);
+  const write = (next) => {
+    if (!next.place?.length) delete next.place;
+    spec.fountains = next;
+    return spec;
+  };
+
+  // Placed on this port by hand: it comes off, open inlet or not.
+  const mine = at(label, edge);
+  if (mine >= 0) {
+    place.splice(mine, 1);
+    return write({ ...f, place });
+  }
+  // On through `auto`: auto goes, and every other open inlet keeps its spring.
+  if (f && f.auto !== false && isOpen) {
+    const others = open.filter((o) => !(o.tile === label && o.edge === edge) && at(o.tile, o.edge) < 0)
+      .map((o) => ({ tile: o.tile, edge: o.edge }));
+    return write({ ...f, auto: false, place: [...place, ...others] });
+  }
   if (!isOpen) {
     // Not an open inlet. If it is the first tile of a river with no way in,
-    // give the river this side as its source and the spring with it.
+    // give the river this side as its source, and the spring with it.
     const p = parseLabel(label);
     const { cols, rows } = dims(spec);
     const [dc, dr] = STEP[edge];
@@ -457,24 +507,15 @@ export function toggleSpring(spec, label, edge) {
     if (!springOn(spec, label, edge)) toggleSpring(spec, label, edge);
     return spec;
   }
-  const on = new Set(open.filter((o) => springOn(spec, o.tile, o.edge)).map((o) => key(o.tile, o.edge)));
-  const k = key(label, edge);
-  if (on.has(k)) on.delete(k); else on.add(k);
-
-  const f = spec.fountains || {};
-  const points = (f.place || []).filter((s) => !(s.edge && !s.atMM));
-  const all = open.length > 0 && open.every((o) => on.has(key(o.tile, o.edge)));
-  const next = { ...f };
-  if (all) {
-    next.auto = true;
-    next.place = points;
-  } else {
-    next.auto = false;
-    next.place = [...points, ...open.filter((o) => on.has(key(o.tile, o.edge))).map((o) => ({ tile: o.tile, edge: o.edge }))];
+  // Off, and an open inlet: put one on.
+  place.push({ tile: label, edge });
+  const plain = (x) => Object.keys(x).every((k) => k === 'tile' || k === 'edge');
+  const everyOne = open.every((o) => { const i = at(o.tile, o.edge); return i >= 0 && plain(place[i]); });
+  if (everyOne) {
+    const isOpenPort = (x) => x.edge && !x.atMM && open.some((o) => o.tile === x.tile && o.edge === x.edge);
+    return write({ ...(f || {}), auto: true, place: place.filter((x) => !isOpenPort(x)) });
   }
-  if (!next.place.length) delete next.place;
-  spec.fountains = next;
-  return spec;
+  return write({ ...(f || {}), auto: false, place });
 }
 
 /** Make the river ending in this tile drain off this side, or stop draining there. */

@@ -183,9 +183,72 @@ test('two outlets facing: the higher falls into the lower channel, level ones go
 });
 
 test('two inlets facing are both dry', () => {
-  const s = seamAB(pair({ a: { E: inn() }, b: { W: inn() } }));
+  const s = seamAB(pair({ a: { E: inn() }, b: { W: inn() }, fed: false }));
   assert.equal(s.kind, 'dry');
   assert.equal(s.wet, false);
+});
+
+test('a fed tile with only an inlet notch fills to its floor and spills through it', () => {
+  const b = pair({ a: { E: inn() }, b: { W: inn() } });
+  assert.equal(tile(b, 'A1').levelMM, 12, 'up to the notch floor, not to the rim');
+  assert.equal(tile(b, 'A1').ponds, true);
+  assert.equal(tile(b, 'B1').wet, true, 'and through into the tile across');
+  assert.ok(describeBoard(b).some((x) => x.kind === 'back' && /spills back out of its east inlet onto B1/.test(x.text)));
+  // B1 cannot send it back the way it came: with no other way out it fills to its rim.
+  assert.equal(tile(b, 'B1').overtops, true);
+});
+
+test('a pond spills out of an open inlet on the edge of the board before it climbs a dam', () => {
+  const b = solveBoard({
+    contract: C,
+    placements: [
+      { col: 0, row: 0, tile: river({ W: inn(), E: out() }, 30) },
+      { col: 1, row: 0, riserMM: 10, tile: river({ W: inn() }, 30) },
+    ],
+    springs: [{ id: '0,0', edge: 'W' }],
+  });
+  assert.equal(tile(b, 'A1').levelMM, 12, 'the notch at 12, not the dam at 22');
+  assert.equal(tile(b, 'B1').wet, false, 'so nothing gets over the dam');
+  const said = describeBoard(b).map((x) => x.text);
+  assert.ok(said.includes('A1 fills to 12 mm and spills back out of its west inlet into the tray.'), said.join(' | '));
+  assert.ok(!said.some((x) => /off the .* edge/.test(x)), 'and no sentence backs up into nowhere');
+});
+
+test('a dam the water never has to climb is not an overtop', () => {
+  // A1 drains off the board to the west long before its pond reaches A2's inlet.
+  const b = solveBoard({
+    contract: C,
+    placements: [
+      { col: 0, row: 0, tile: river({ W: out(), N: out() }, 30) },
+      { col: 0, row: 1, tile: river({ S: inn() }, 30) },
+    ],
+    springs: [{ id: '0,0' }],
+  });
+  assert.equal(tile(b, 'A1').overtops, false);
+  const dam = b.seams.find((x) => x.kind === 'dam');
+  assert.notEqual(dam.holds, false, 'not badged as overtopping');
+  assert.equal(dam.wet, false);
+  assert.equal(countBoard(b).overtops, 0);
+});
+
+test('a tile that overtops is counted even when no dam is the reason', () => {
+  const p = plan({ cols: 2, rows: 1, fountains: { auto: true }, rivers: [{ sourceEdge: 'W', path: [[0, 0], [1, 0]], size: 'creek' }] });
+  assert.ok(p.sentences.some((x) => /B1 has no way out/.test(x.text)));
+  assert.equal(p.counts.overtops, 1);
+});
+
+test('the overtop sentence names the lowest dam, not the first', () => {
+  const b = solveBoard({
+    contract: C,
+    placements: [
+      { col: 0, row: 0, tile: river({ N: out(), E: out() }, 20) },
+      { col: 0, row: 1, riserMM: 20, tile: river({ S: inn() }, 40) },
+      { col: 1, row: 0, riserMM: 10, tile: river({ W: inn() }, 40) },
+    ],
+    springs: [{ id: '0,0' }],
+  });
+  const said = describeBoard(b).find((x) => x.kind === 'overtops');
+  assert.match(said.text, /^A1 would have to pond to 22 mm to get into B1, but its rim is 20 mm/);
 });
 
 test('two land edges a riser apart are a cliff, and level ones are not', () => {

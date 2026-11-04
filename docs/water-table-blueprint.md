@@ -596,7 +596,12 @@ Decisions the build had to take, because a map-style spec could not say what
    `spills` (an outlet above lower land pours onto it), `head-on` (two
    outlets facing; the higher falls into the lower's channel, level ones go
    nowhere), `spring` (a fed open inlet), and `cliff`/`plane` for land.
-   `backs up` is a flag on the tile, said in a sentence, not yet a merged pond.
+   **An inlet is a notch in the rim too**: one facing off the board, onto
+   land or into another inlet is an exit at its floor (or over what is
+   across it), so a pond spills back out there instead of climbing past it.
+   Water never leaves by the notch it arrived through — two tiles joined that
+   way are one pond, which is phase 4. `backs up` is a flag on a tile whose
+   pond rises above the inlet its river comes in by, said in a sentence.
 9. **Rims before anything is grown.** The board needs rims for *holds* and
    *overtops*, and in a map-style spec they come from the world. A second
    worker grows the ground without its ice (≈0.1 s) whenever the fields it

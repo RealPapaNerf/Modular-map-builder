@@ -101,7 +101,8 @@ if (cmd === 'canopy') {
     for (const s2 of shown) {
       const what = s2.kind === 'waterfall' || s2.kind === 'spills' ? `${s2.kind} ${Math.round(s2.dropMM)} mm`
         : (s2.kind === 'dam' || s2.kind === 'blocked') ? `${s2.kind}, ${s2.holds === false ? `overtops at ${Math.round(s2.pondToMM)}` : `ponds to ${Math.round(s2.pondToMM ?? s2.sillMM)}`} mm`
-          : s2.kind === 'cliff' ? `cliff ${Math.round(Math.abs(s2.landStepMM))} mm` : s2.kind;
+          : s2.kind === 'cliff' ? `cliff ${Math.round(Math.abs(s2.landStepMM))} mm`
+            : s2.backFrom ? `${s2.kind === 'spring' ? 'spring; ' : ''}${s2.backFrom} spills back out here` : s2.kind;
       console.log(`  ${s2.tiles.join(' | ').padEnd(8)} ${what}${s2.spreads ? ', spreads' : ''}${s2.wet || s2.kind === 'dry' ? '' : ' (dry)'}`);
     }
   }
