@@ -30,6 +30,11 @@ import { tileHeights, transferables } from './heights.js';
 
 let result = null;
 let spec = null;
+// The last world grown, and the key it was grown for. The ground is a pure
+// function of worldKey(spec, { ice: true }), so a rebuild that changed
+// nothing in it -- a brushstroke, a river, a fall -- reuses it and skips the
+// ice, which is most of a draft build.
+let kept = null;
 
 const post = (msg, transfer = []) => self.postMessage(msg, transfer);
 const mapName = () => (spec && spec.name) || 'map';
@@ -144,7 +149,9 @@ self.onmessage = async (ev) => {
       // `check` is about the contract, not the rock — same as the CLI.
       const runSpec = msg.mode === 'check' ? { ...spec, glacier: false } : spec;
       result = null;
-      result = buildMap(runSpec, (m) => post({ type: 'progress', message: m }));
+      const key = worldKey(runSpec, { ice: true });
+      result = buildMap(runSpec, (m) => post({ type: 'progress', message: m }), { world: kept?.key === key ? kept.world : null });
+      kept = { key, world: result.world };
       result.name = mapName();
 
       post({ type: 'progress', message: 'Shading' });

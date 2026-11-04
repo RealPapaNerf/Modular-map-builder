@@ -470,6 +470,165 @@ await step('Board and 3D swap; an out-of-date 3D view says so and still shows wh
   assert.equal((await stats()).tiles, 9);
 });
 
+/* ------------------------------------------------------------------ phase 3 */
+
+const settled = () => page.waitForFunction(() => window.mmb.state.grown && !window.mmb.state.grown.stale && !window.mmb.state.busy, null, { timeout: 240000 });
+/** Look straight down on a board point, from `up` mm above it: strokes then land where they are drawn. */
+async function lookDown(x, y, up = 420) {
+  await page.evaluate(([x, y, up]) => {
+    const { camera, controls, invalidate } = window.mmb.viewer().debug;
+    controls.target.set(x, 40, -y);
+    camera.position.set(x, 40 + up, -y + 1);
+    controls.update();
+    invalidate();
+  }, [x, y, up]);
+  await page.waitForTimeout(250);
+}
+/** A tile's grown heights and cell kinds, as the 3D view has them. */
+const grownTile = (label) => page.evaluate((label) => {
+  const h = window.mmb.state.grown.tiles3d.tiles.find((t) => t.label === label);
+  return { heights: Array.from(h.heights), kind: Array.from(h.kind), nx: h.nx, step: h.step };
+}, label);
+/** How much higher `b` stands than `a` along a line across a tile, at plain ground in both: no trees, no water. */
+function crestRise(a, b, y, x0, x1) {
+  const out = [];
+  for (let x = x0; x <= x1; x += a.step) {
+    const k = Math.round(y / a.step) * a.nx + Math.round(x / a.step);
+    if (a.kind[k] === 0 && b.kind[k] === 0) out.push(b.heights[k] - a.heights[k]);
+  }
+  return out;
+}
+/**
+ * Drag a stroke along a straight line ON THE GROUND. Each point is aimed at
+ * its own board point: in perspective, a straight line on the screen is not
+ * one on uneven ground, and the brush follows the ground under the pointer.
+ */
+async function strokeAcross(from, to, steps = 14) {
+  const a = await at3d(...from);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  for (let i = 1; i <= steps; i++) {
+    const p = await at3d(from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps);
+    await page.mouse.move(p.x, p.y);
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(80);
+}
+const worst = () => page.evaluate(() => window.mmb.state.grown.report.totals.worstEdgeMM);
+/** Pick a Refine tool and wait for the 3D view to have it in hand. */
+async function refineTool(id, kind) {
+  await page.click(`[data-tool="${id}"]`);
+  await page.waitForFunction((kind) => window.mmb.viewer().stats().tool === kind, kind);
+}
+
+await step('Refine catches the 3D view up with the spec, and a brush shows the rim lock', async () => {
+  await page.click('.stages button[data-stage="refine"]');
+  await settled();
+  assert.equal(await page.evaluate(() => window.mmb.state.spec.seed), 8, 'grown again on the new seed, without being asked');
+  await refineTool('raise', 'brush');
+  const st = await stats();
+  assert.equal(st.bands, 9, 'every tile shows the band where a stroke fades out');
+  await lookDown(300, 300);
+  const p = await at3d(300, 300);
+  await page.mouse.move(p.x, p.y);
+  await page.waitForFunction(() => window.mmb.viewer().stats().cursor);
+});
+
+await step('DONE WHEN: a raised ridge survives a change of seed, and the edge check still reads zero', async () => {
+  await chip(24);
+  await chip(8);
+  // Across B2's south-west quarter, clear of its rivers: (30, 45) to (90, 45) in the tile.
+  const plain8 = await grownTile('B2');
+  const z0 = await page.evaluate(() => window.mmb.viewer().heightAt(260, 245));
+  await strokeAcross([230, 245], [290, 245]);
+  const e = (await spec()).edits?.B2;
+  assert.equal(e?.length, 1, 'one stroke, one edit');
+  assert.equal(e[0].op, 'raise');
+  assert.equal(e[0].mm, 8);
+  assert.equal(e[0].radiusMM, 12);
+  assert.ok(Math.abs(e[0].path[0][0] - 30) < 3 && Math.abs(e[0].path[0][1] - 45) < 3, JSON.stringify(e[0].path));
+  assert.ok(Math.abs(e[0].path[e[0].path.length - 1][0] - 90) < 3, JSON.stringify(e[0].path));
+  const z1 = await page.evaluate(() => window.mmb.viewer().heightAt(260, 245));
+  assert.ok(Math.abs(z1 - z0 - 8) < 0.5, `shown at once, before the build: +${(z1 - z0).toFixed(2)} mm`);
+  const t0 = Date.now();
+  await settled();
+  console.log(`    grown again with the stroke in ${((Date.now() - t0) / 1000).toFixed(1)} s, the ground kept`);
+  assert.ok(await worst() < 1e-6, 'the edge check reads zero with the edit in');
+  const ridged8 = await grownTile('B2');
+  const rise8 = crestRise(plain8, ridged8, 45, 36, 84);
+  assert.ok(rise8.length >= 4, `only ${rise8.length} bare points on the crest`);
+  assert.ok(rise8.every((d) => Math.abs(d - 8) < 0.05), `the crest rose ${rise8.map((d) => d.toFixed(2)).join(', ')}`);
+
+  // A new seed: new ground under the same stroke.
+  await nothingSelected();
+  await field('Seed', 9);
+  await settled();
+  assert.equal((await spec()).edits.B2.length, 1, 'the edit is kept');
+  assert.ok(await worst() < 1e-6, 'and the edge check still reads zero');
+  const ridged9 = await grownTile('B2');
+  // The same ground without the stroke, to see what it did: take it off in the inspector.
+  await refineTool('select', 'select');
+  const b2 = await at3d(320, 250);
+  await page.mouse.click(b2.x, b2.y);
+  await page.waitForTimeout(120);
+  assert.equal(await page.locator('#inspector .edit-list li').count(), 1);
+  await page.click('#inspector .edit-list button[data-edit="0"]');
+  assert.equal((await spec()).edits, undefined);
+  await settled();
+  const plain9 = await grownTile('B2');
+  assert.notDeepEqual(plain9.heights, plain8.heights, 'seed 9 is different ground');
+  const rise9 = crestRise(plain9, ridged9, 45, 36, 84);
+  assert.ok(rise9.length >= 4, `only ${rise9.length} bare points on the crest`);
+  assert.ok(rise9.every((d) => Math.abs(d - 8) < 0.05), `on the new seed the crest rose ${rise9.map((d) => d.toFixed(2)).join(', ')}`);
+  console.log(`    the crest stands 8 mm proud on seed 8 (${rise8.length} bare points) and on seed 9 (${rise9.length})`);
+  // And undo puts the stroke back: the same spec grows the same ground.
+  await page.locator('#view3d').focus();
+  await page.keyboard.press('Control+z');
+  await settled();
+  assert.equal((await spec()).edits.B2.length, 1);
+  assert.deepEqual((await grownTile('B2')).heights, ridged9.heights);
+});
+
+await step('a lake placed in Refine and dragged by its handle, then a planted wood', async () => {
+  await refineTool('lake', 'place');
+  await lookDown(100, 100);
+  const a = await at3d(90, 110);
+  await page.mouse.click(a.x, a.y);
+  await page.waitForTimeout(100);
+  const placed = (await spec()).lakes.place;
+  const i = placed.length - 1;
+  assert.equal(placed[i].tile, 'A1');
+  assert.ok(Math.abs(placed[i].atMM[0] - 90) < 3 && Math.abs(placed[i].atMM[1] - 110) < 3, JSON.stringify(placed[i].atMM));
+  await settled();
+  await refineTool('select', 'select');
+  await page.waitForTimeout(150);
+  const handle = (await stats()).handles.find((x) => x.key === `lake:${i}`);
+  assert.ok(handle, 'the lake has a handle');
+  const b = await box3d();
+  const to = await at3d(60, 140);
+  await page.mouse.move(b.x + handle.x, b.y + handle.y);
+  await page.mouse.down();
+  await page.mouse.move((b.x + handle.x + to.x) / 2, (b.y + handle.y + to.y) / 2, { steps: 4 });
+  await page.mouse.move(to.x, to.y, { steps: 4 });
+  await page.mouse.up();
+  const moved = (await spec()).lakes.place[i].atMM;
+  assert.ok(Math.abs(moved[0] - 60) < 3 && Math.abs(moved[1] - 140) < 3, JSON.stringify(moved));
+  await settled();
+  // C3 is high and nearly bare: the map's woods stop below it.
+  const trees = () => page.evaluate(() => window.mmb.state.grown.report.tiles.find((t) => t.label === 'C3').trees);
+  const before = await trees();
+  await refineTool('plant', 'brush');
+  await chip('conifer');
+  await lookDown(500, 500);
+  await strokeAcross([450, 470], [550, 530]);
+  assert.equal((await spec()).edits.C3[0].op, 'plant');
+  assert.equal((await spec()).edits.C3[0].kind, 'conifer');
+  await settled();
+  const after = await trees();
+  assert.ok(after > before + 5, `${before} trees on C3, then ${after}`);
+  assert.ok(await worst() < 1e-6);
+});
+
 await step('nothing went to the console', async () => {
   assert.deepEqual(errors, []);
 });

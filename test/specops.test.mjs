@@ -260,3 +260,70 @@ test('setting a tile to the height it already has does not move its neighbours',
   assert.deepEqual(s.levels, { '0,0': 3, '1,0': 3, '0,1': 0 }, 'B1\'s key stays: B2 takes its level from it');
   assert.equal(plan(s).levels.get('1,1'), before);
 });
+
+/* ------------------------------------------------------------- refine */
+
+const board3 = (spec) => plan(spec).placements.map((p) => ({ col: p.col, row: p.row, rot: p.rot, label: p.label, riserMM: p.riserMM }));
+
+test('a stroke is written on each tile it reaches, in that tile\'s own millimetres', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  // From B2's middle east into C2: two tiles, each in its own frame.
+  const touched = ops.addStroke(s, board3(s), [{ x: 300, y: 300 }, { x: 360, y: 300 }, { x: 460, y: 300 }], { op: 'raise', radiusMM: 10, mm: 4 });
+  assert.deepEqual(touched.sort(), ['B2', 'C2']);
+  assert.deepEqual(s.edits.B2, [{ op: 'raise', path: [[100, 100], [260, 100]], radiusMM: 10, mm: 4 }], 'the straight run is one segment');
+  assert.deepEqual(s.edits.C2[0].path, [[-100, 100], [60, 100]]);
+});
+
+test('a stroke on a turned tile is turned back into the tile\'s frame, so it stays where it was drawn', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  s.rot = { '1,1': 1 }; // B2 a quarter turn clockwise: its own north faces east
+  ops.addStroke(s, board3(s), [{ x: 300, y: 330 }, { x: 300, y: 370 }], { op: 'lower', radiusMM: 8, mm: 2 });
+  // On the board the stroke runs north from 30 mm above B2's middle; in B2's own frame that is west of it.
+  assert.deepEqual(s.edits.B2[0].path, [[70, 100], [30, 100]]);
+});
+
+test('a stroke that only grazes a tile across a seam writes nothing there', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  // 5 mm from the seam inside A2, with a 6 mm brush: it reaches 1 mm into B2,
+  // where the rim lock leaves nothing of it. A2, 5 mm in, keeps a third.
+  const touched = ops.addStroke(s, board3(s), [{ x: 195, y: 300 }], { op: 'raise', radiusMM: 6, mm: 4 });
+  assert.deepEqual(touched, ['A2']);
+  assert.equal(s.edits.B2, undefined);
+});
+
+test('a flatten is to one height on the table, so each tile gets it less its own riser', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  const pl = board3(s);
+  const b3 = pl.find((p) => p.label === 'B3');
+  const b2 = pl.find((p) => p.label === 'B2');
+  ops.addStroke(s, pl, [{ x: 300, y: 380 }, { x: 300, y: 420 }], { op: 'flatten', radiusMM: 10, toWorldMM: 90 });
+  assert.equal(s.edits.B2[0].toMM, 90 - b2.riserMM);
+  assert.equal(s.edits.B3[0].toMM, 90 - b3.riserMM);
+});
+
+test('edits come off one at a time or all together, and an empty list is not kept', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  ops.addStroke(s, board3(s), [{ x: 300, y: 300 }], { op: 'smooth', radiusMM: 15, strength: 0.5 });
+  ops.addStroke(s, board3(s), [{ x: 320, y: 300 }], { op: 'plant', radiusMM: 15, kind: 'conifer' });
+  assert.equal(s.edits.B2.length, 2);
+  assert.equal(ops.describeEdit(s.edits.B2[0]), 'Smoothed, 30 mm wide');
+  assert.equal(ops.describeEdit(s.edits.B2[1]), 'Conifers planted, 30 mm wide');
+  ops.removeEdit(s, 'B2', 0);
+  assert.equal(s.edits.B2[0].op, 'plant');
+  ops.clearEdits(s, 'B2');
+  assert.equal(s.edits, undefined);
+});
+
+test('a handle drag moves a world feature by its fraction and a lake within its own tile, turned back', () => {
+  const s = structuredClone(EXAMPLE_SPEC);
+  ops.moveFeature(s, 'volcano', 0, { x: 120, y: 480 });
+  assert.deepEqual(s.volcanoes[0].at, [0.2, 0.8]);
+  ops.moveFeature(s, 'spine', 1, { x: 300, y: 300 });
+  assert.deepEqual(s.spine[1], [0.5, 0.5]);
+  s.lakes = { place: [{ tile: 'B2', atMM: [50, 50] }] };
+  s.rot = { '1,1': 2 }; // half a turn: the board's north-east of B2 is its own south-west
+  ops.moveFeature(s, 'lake', 0, { x: 360, y: 340 });
+  assert.deepEqual(s.lakes.place[0].atMM, [40, 60]);
+  ops.moveFeature(s, 'lake', 0, { x: 900, y: 900 });
+  assert.deepEqual(s.lakes.place[0].atMM, [2, 2], 'kept on its tile');
+});

@@ -19,6 +19,7 @@
 
 import { columnLabel, EDGES, OPPOSITE, STEP, makeContract } from '../lib/contract.js';
 import { boardFromSpec } from '../lib/board.js';
+import { EDIT_DEFAULTS, editsFor, strokeWeight } from '../lib/edits.js';
 
 /* ------------------------------------------------------------------ basics */
 
@@ -83,6 +84,10 @@ export function tidy(spec) {
   if (Array.isArray(spec.spine) && spec.spine.length < 2) delete spec.spine;
   for (const k of ['lakes', 'fountains']) {
     if (spec[k] && Array.isArray(spec[k].place) && !spec[k].place.length) delete spec[k].place;
+  }
+  if (spec.edits && typeof spec.edits === 'object') {
+    for (const [label, list] of Object.entries(spec.edits)) if (!Array.isArray(list) || !list.length) delete spec.edits[label];
+    if (!Object.keys(spec.edits).length) delete spec.edits;
   }
   return spec;
 }
@@ -603,12 +608,150 @@ export function addWoodLayer(spec, kind = 'deciduous') {
   return spec.canopy.length - 1;
 }
 
+/* ------------------------------------------------------------------ edits */
+
+/** A board point in a tile's own millimetres, undoing its turn (as features.js boardToLocal). */
+function intoTile(T, col, row, rot, X, Y) {
+  let dx = X - (col * T + T / 2);
+  let dy = Y - (row * T + T / 2);
+  for (let i = 0; i < (rot || 0); i++) [dx, dy] = [-dy, dx];
+  return { x: dx + T / 2, y: dy + T / 2 };
+}
+
+/** Douglas-Peucker on [x, y] pairs: a dragged stroke is a few vertices, not one per mouse move. */
+function thin(pts, tol) {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Uint8Array(pts.length);
+  keep[0] = 1;
+  keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const [ax, ay] = pts[a];
+    const dx = pts[b][0] - ax;
+    const dy = pts[b][1] - ay;
+    const L = Math.hypot(dx, dy) || 1;
+    let best = -1;
+    let bestD = tol;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs((pts[i][0] - ax) * dy - (pts[i][1] - ay) * dx) / L;
+      if (d > bestD) { bestD = d; best = i; }
+    }
+    if (best >= 0) { keep[best] = 1; stack.push([a, best], [best, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/**
+ * A brushstroke drawn on the board, written as an edit on every tile it
+ * reaches, each in that tile's own millimetres: turned back the way the tile
+ * is turned, so the stroke stays on the ground it was drawn on whichever way
+ * the piece sits. A tile the stroke only grazes -- less than half a percent
+ * of it anywhere, once the rim lock has faded it -- gets nothing.
+ *
+ *   placements  the board's tiles: { col, row, rot, label, riserMM }
+ *   pts         the stroke, in board mm
+ *   o           { op, radiusMM, mm, strength, kind, toWorldMM }; a flatten
+ *               is to one height ON THE TABLE, so each tile gets it less
+ *               its own riser
+ *
+ * Returns the labels written to.
+ */
+export function addStroke(spec, placements, pts, o) {
+  const { T } = dims(spec);
+  const c = contractOf(spec);
+  const lock = c.rimLockMM ?? EDIT_DEFAULTS.rimLockMM;
+  const R = Number(o.radiusMM);
+  if (!pts.length || !(R > 0)) return [];
+  const touched = [];
+  for (const p of placements) {
+    const local = pts.map(({ x, y }) => intoTile(T, p.col, p.row, p.rot, x, y));
+    let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+    for (const q of local) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
+    if (x1 + R <= 0 || y1 + R <= 0 || x0 - R >= T || y0 - R >= T) continue;
+    const path = thin(local.map((q) => [r1(q.x), r1(q.y)]), Math.max(0.5, R * 0.05));
+    const e = { op: o.op, path, radiusMM: r1(R) };
+    // How much of the stroke this tile keeps at most, on a 1 mm grid over where it reaches.
+    let most = 0;
+    for (let y = Math.max(0, y0 - R); y <= Math.min(T, y1 + R) && most < 0.005; y += 1) {
+      for (let x = Math.max(0, x0 - R); x <= Math.min(T, x1 + R) && most < 0.005; x += 1) most = Math.max(most, strokeWeight(e, path, x, y, T, lock));
+    }
+    if (most < 0.005) continue;
+    if (o.op === 'raise' || o.op === 'lower') e.mm = r1(Number(o.mm) || 0);
+    if (o.op === 'smooth' && Number.isFinite(o.strength)) e.strength = o.strength;
+    if (o.op === 'flatten') e.toMM = r1(Math.max(EDIT_DEFAULTS.floorMM, o.toWorldMM - (p.riserMM || 0)));
+    if (o.op === 'plant') e.kind = o.kind || 'deciduous';
+    spec.edits = spec.edits || {};
+    spec.edits[p.label] = [...editsFor(spec, p.label), e];
+    touched.push(p.label);
+  }
+  return touched;
+}
+
+/**
+ * Move something already placed to a board point, as a handle drag in 3D
+ * does: a ridge point, a volcano or a flat to its fraction of the world, a
+ * lake or a spring to the millimetres of the tile it belongs to -- turned
+ * back the way that tile is turned, and kept on it, a hair in from its rim.
+ */
+export function moveFeature(spec, kind, index, { x, y }) {
+  const { T } = dims(spec);
+  const clamp = (v) => Math.max(2, Math.min(T - 2, v));
+  switch (kind) {
+    case 'spine': if (Array.isArray(spec.spine) && spec.spine[index]) spec.spine[index] = toWorld(spec, { x, y }); break;
+    case 'volcano': if (spec.volcanoes?.[index]) spec.volcanoes[index].at = toWorld(spec, { x, y }); break;
+    case 'flat': if (spec.flats?.[index]) spec.flats[index].at = toWorld(spec, { x, y }); break;
+    case 'lake':
+    case 'springpoint': {
+      const spot = (kind === 'lake' ? spec.lakes?.place : spec.fountains?.place)?.[index];
+      const p = parseLabel(spot?.tile);
+      if (!p) break;
+      const rot = ((Math.round(Number(spec.rot?.[keyOf(p.col, p.row)]) || 0) % 4) + 4) % 4;
+      const l = intoTile(T, p.col, p.row, rot, x, y);
+      spot.atMM = [r1(clamp(l.x)), r1(clamp(l.y))];
+      break;
+    }
+    default: break;
+  }
+  return spec;
+}
+
+/** Take one edit off a tile, by its place in the list. */
+export function removeEdit(spec, label, index) {
+  const list = editsFor(spec, label);
+  if (index < 0 || index >= list.length) return spec;
+  spec.edits[label] = list.filter((_, i) => i !== index);
+  return tidy(spec);
+}
+
+/** Every edit off a tile. */
+export function clearEdits(spec, label) {
+  if (spec.edits) delete spec.edits[label];
+  return tidy(spec);
+}
+
+/** What an edit did, in a few words, for the inspector's list. */
+export function describeEdit(e) {
+  const r = Number(e.radiusMM) || 0;
+  const wide = `${Math.round(r * 2)} mm wide`;
+  const along = (e.path?.length || 0) > 1 ? ' along a line' : '';
+  switch (e.op) {
+    case 'raise': return `Raised ${e.mm} mm${along}, ${wide}`;
+    case 'lower': return `Lowered ${e.mm} mm${along}, ${wide}`;
+    case 'smooth': return `Smoothed${along}, ${wide}`;
+    case 'flatten': return `Flattened to ${e.toMM ?? 'where it began'} mm${along}, ${wide}`;
+    case 'clear': return `Trees cleared${along}, ${wide}`;
+    case 'plant': return `${e.kind === 'conifer' ? 'Conifers' : 'Broadleaf'} planted${along}, ${wide}`;
+    default: return `${e.op}?`;
+  }
+}
+
 /* --------------------------------------------------------------- printing */
 
 /** The order the example writes its keys in, so the JSON reads the same however it was drawn. */
 export const KEY_ORDER = ['name', 'seed', 'cols', 'rows', 'reliefMM', 'terraceMM', 'meshMM', 'worldSizeM', 'worldGrid',
   'spineHeightM', 'spineWidthM', 'baseElevM', 'roughness', 'spine', 'flats', 'volcanoes', 'glacier', 'reposeDeg', 'reposePasses',
-  'levels', 'falls', 'waterfalls', 'rot', 'cornerRaise', 'rivers', 'canopy', 'lakes', 'fountains', 'joints', 'tray', 'contract'];
+  'levels', 'falls', 'waterfalls', 'rot', 'cornerRaise', 'rivers', 'canopy', 'lakes', 'fountains', 'edits', 'joints', 'tray', 'contract'];
 
 const ORDERS = {
   canopy: ['kind', 'crownMM', 'heightMM', 'density', 'spacingMM', 'minZMM', 'maxZMM', 'thinningMM', 'maxSlopeDeg', 'tiles', 'region'],

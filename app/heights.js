@@ -341,6 +341,46 @@ export function proxyArrays(h, side = 41) {
   return { position, index };
 }
 
+/**
+ * The band round a tile's rim where a hand edit fades out: the cells within
+ * `lockMM` of the rim, a hair above the ground, opaque at the rim and clear
+ * at `lockMM` in. `rgb` is the colour, linear, 0..1. Colours are RGBA, so the
+ * band shows exactly how much of a stroke each point would keep -- the less
+ * of the band, the more of the stroke.
+ */
+export function lockBandArrays(h, lockMM, rgb, { liftMM = 0.3, alpha = 0.5 } = {}) {
+  const { nx, ny, step, heights } = h;
+  const rimDist = (i, j) => Math.min(i, j, nx - 1 - i, ny - 1 - j) * step;
+  const position = new Float32Array(nx * ny * 3);
+  const color = new Float32Array(nx * ny * 4);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i;
+      position[k * 3] = i * step;
+      position[k * 3 + 1] = j * step;
+      position[k * 3 + 2] = heights[k] + liftMM;
+      const t = Math.min(1, rimDist(i, j) / Math.max(1e-6, lockMM));
+      color[k * 4] = rgb[0];
+      color[k * 4 + 1] = rgb[1];
+      color[k * 4 + 2] = rgb[2];
+      color[k * 4 + 3] = alpha * (1 - t * t * (3 - 2 * t));
+    }
+  }
+  const cells = [];
+  for (let j = 0; j < ny - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      if (Math.min(rimDist(i, j), rimDist(i + 1, j + 1), rimDist(i + 1, j), rimDist(i, j + 1)) < lockMM) cells.push(j * nx + i);
+    }
+  }
+  const index = indexArray(nx * ny, cells.length * 6);
+  let p = 0;
+  for (const a of cells) {
+    index[p++] = a; index[p++] = a + 1; index[p++] = a + nx + 1;
+    index[p++] = a; index[p++] = a + nx + 1; index[p++] = a + nx;
+  }
+  return { position, color, index };
+}
+
 /** The ground's height at a tile-local point, bilinear, clamped to the tile. */
 export function sampleHeight(h, x, y) {
   const { nx, ny, step, heights } = h;

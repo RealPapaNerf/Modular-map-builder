@@ -287,12 +287,33 @@ function tilePanel(api, sel) {
       ]),
       h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'primary', onclick: () => api.openTile(sel.col, sel.row) }, `Open ${t.label}`)),
     ),
+    editsGroup(api, t.label),
     edges.length ? group('Remove', h('div', { class: 'row-btns' }, edges.map(([kind, side]) => h('button', {
       type: 'button', class: 'danger',
       onclick: () => { api.commit((x) => ops.shrinkBoard(x, side), `remove a ${kind === 'col' ? 'column' : 'row'}`); api.select(null); },
     }, kind === 'col' ? `Remove column ${t.label.replace(/\d+$/, '')}` : `Remove row ${sel.row + 1}`))),
     h('p', { class: 'hint' }, 'A map-style board is a rectangle, so a tile goes with its row or column. Rivers through it are cut.')) : null,
   ];
+}
+
+/**
+ * The strokes made on a tile in Refine, oldest first, each one removable.
+ * They are replayed in this order every time the tile is grown.
+ */
+function editsGroup(api, label) {
+  const list = (api.state.spec.edits?.[label] || []).filter((e) => e && typeof e === 'object');
+  if (!list.length) return null;
+  return group(`Edits by hand (${list.length})`,
+    h('ol', { class: 'edit-list' }, list.map((e, i) => h('li', {},
+      h('span', {}, ops.describeEdit(e)),
+      h('button', {
+        type: 'button', class: 'mini', title: 'Take this edit off', 'aria-label': `Remove edit ${i + 1}`, 'data-edit': String(i),
+        onclick: () => api.commit((x) => ops.removeEdit(x, label, i), `remove an edit on ${label}`),
+      }, '×')))),
+    h('div', { class: 'row-btns' }, h('button', {
+      type: 'button', class: 'danger', onclick: () => api.commit((x) => ops.clearEdits(x, label), `clear the edits on ${label}`),
+    }, 'Clear all')),
+    h('p', { class: 'hint' }, 'Replayed in this order onto the ground every time it grows, so a new seed keeps them. None of them reaches the last 12 mm of the rim.'));
 }
 
 /* ------------------------------------------------------------------- river */

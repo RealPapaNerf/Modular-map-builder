@@ -471,6 +471,77 @@ const tileSelect = {
   },
 };
 
+/* ------------------------------------------------------------------ refine */
+
+// The Refine tools work on the 3D view, so the pointer is the viewer's: it
+// paints a stroke along the ground, or places a point, or drags a handle,
+// and main.js writes what it did into the spec. What is here is what the
+// panel shows: the tools, their keys, and their palettes.
+
+const WIDTHS = [12, 24, 40, 64];
+const widthChips = (api) => ({
+  chips: WIDTHS.map((w) => [w, `${w}`]),
+  value: api.state.palette.brushWidth,
+  pick: (v) => api.setPalette({ brushWidth: v }),
+  note: 'Brush width, in mm. It fades to nothing over the last 12 mm of every rim, which is drawn red while a brush is in hand.',
+});
+const heightChips = (api) => ({
+  chips: [[2, '2'], [4, '4'], [8, '8'], [15, '15']],
+  value: api.state.palette.brushMM,
+  pick: (v) => api.setPalette({ brushMM: v }),
+  note: 'How far a stroke moves the ground along its line, in mm.',
+});
+
+export const REFINE_TOOLS = [
+  {
+    id: 'select', label: 'Select', glyph: '↖', key: 'V',
+    hint: 'Click a tile or a badge to inspect it. Drag a lake, a spring, a volcano, a flat or a ridge point along the ground to move it.',
+  },
+  {
+    id: 'raise', label: 'Raise', glyph: '▲', key: 'U', brush: true,
+    hint: 'Drag along the ground to raise a ridge. The right button orbits.',
+    palette: (api) => [widthChips(api), heightChips(api)],
+  },
+  {
+    id: 'lower', label: 'Lower', glyph: '▼', key: 'J', brush: true,
+    hint: 'Drag along the ground to cut it down. Nothing goes below the 2 mm of floor a tile keeps.',
+    palette: (api) => [widthChips(api), heightChips(api)],
+  },
+  {
+    id: 'smooth', label: 'Smooth', glyph: '≈', key: 'M', brush: true,
+    hint: 'Drag to ease the ground towards its own average: knocks the noise off a slope and keeps its shape.',
+    palette: (api) => [widthChips(api)],
+  },
+  {
+    id: 'flatten', label: 'Flatten', glyph: '▭', key: 'N', brush: true,
+    hint: 'Drag to level the ground to the height where the stroke began: a terrace, a road bed, a place for something to stand.',
+    palette: (api) => [widthChips(api)],
+  },
+  {
+    id: 'lake', label: 'Lake', glyph: '◌', key: 'K', place: true,
+    hint: 'Click where a lake should be. It fills the ground that is low round that point.',
+  },
+  {
+    id: 'springpoint', label: 'Spring', glyph: '◉', key: 'S', place: true,
+    hint: 'Click where a spring should come up. Every plate under it then needs the same hole.',
+  },
+  {
+    id: 'plant', label: 'Plant', glyph: '♣', key: 'G', brush: true,
+    hint: 'Drag to plant a wood along the stroke. It keeps off water, steep ground and the woods already there.',
+    palette: (api) => [widthChips(api), {
+      chips: [['deciduous', 'Broadleaf'], ['conifer', 'Conifers']],
+      value: api.state.palette.plantKind,
+      pick: (v) => api.setPalette({ plantKind: v }),
+    }],
+  },
+  {
+    id: 'clear', label: 'Clear', glyph: '⌫', key: 'X', brush: true,
+    hint: 'Drag to clear trees: none of the map\'s woods grows under the stroke.',
+    palette: (api) => [widthChips(api)],
+  },
+];
+export const REFINE_GROUPS = [['Look', ['select']], ['The ground', ['raise', 'lower', 'smooth', 'flatten']], ['On it', ['lake', 'springpoint', 'plant', 'clear']]];
+
 export const BOARD_TOOLS = [select, place, turn, riser, river, fall, spring, drain, ridge, volcano, flat];
 export const TILE_TOOLS = [tileSelect, ridge, volcano, flat, lake, springPoint, wood, corner];
 export const BOARD_GROUPS = [['The board', ['select', 'place', 'turn', 'riser']], ['The water', ['river', 'fall', 'spring', 'drain']], ['The ground', ['ridge', 'volcano', 'flat']]];

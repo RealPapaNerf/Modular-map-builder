@@ -474,7 +474,9 @@ building the same bytes.
    after the carve and before the lakes, followed by the conform. The
    whole map rebuilds on each stroke at this stage; it is slow and it is
    correct. *Done when* a raised ridge survives a change of seed and the
-   edge check still reads zero.
+   edge check still reads zero. **Built** — checked in Chromium by
+   `test/browser.mjs` and in node by `test/edits.test.mjs`; what it decided
+   is in §13.
 4. **The board, properly.** `lib/board.js` grows the fixed point: ponds that
    back up, merged ponds, the design checker reporting what a layout wants.
    `mmb board`. *Done when* the test boards in §4.2 all report as written.
@@ -706,3 +708,80 @@ Decisions the build had to take:
 Left for later: an ungrown board in 3D (until something is grown, Grow shows
 the 2D board and says so), the tray and shadows, and a worker pool. The
 brushes on this view are phase 3.
+
+## 13. Phase 3, as built
+
+Built 4 November 2026. The *done when* is checked twice. `npm run
+test:browser` draws an 8 mm ridge across B2 with the mouse on the 3D view,
+lets the map grow again, changes the seed, grows again, and compares the
+crest with the same ground grown without it. `test/edits.test.mjs` does the
+same in node on two seeds, exactly.
+
+What exists:
+
+| piece | what it is |
+|---|---|
+| `lib/edits.js` | the op list, the rim lock and the replay: `applyGroundEdits` for raise, lower, smooth and flatten; `clearFilter` and `plantings` for the woods. Pure and tested on its own |
+| `lib/build.js` | replays a tile's ground ops after the carve and its conform, then conforms again; the tree ops where the woods are planted; and takes a `world` already grown for the same `worldKey` |
+| `app/viewer.js` | a brush that paints along the ground, a place tool, handles to drag, the rim lock drawn, and a cursor tinted by the brush's real weight |
+| `app/specops.js` | `addStroke` (a stroke on the board → an edit on every tile it reaches, in each tile's own frame), `moveFeature`, `removeEdit`, `clearEdits` |
+| Refine | the stage: tools, palettes, an instant preview, a regrow after every change, and each tile's edits listed in the inspector |
+
+What it measured, on the example at 2.5 mm in Chromium's software renderer:
+the crest stood **8.00 mm** proud of the same ground at every bare point
+along it (13 points on seed 8, 12 on seed 9). The worst edge error read
+**0.0000 mm** on both seeds. A stroke grew again in **0.9 s**, the ground
+kept.
+
+Decisions the build had to take:
+
+1. **An edit is keyed by tile and written in the tile's own frame.** A
+   map-style spec has no designs to key by, so it is the label, as a wood's
+   `tiles` and a lake's `tile` are. A stroke drawn on the board is turned back
+   by the tile's `rot`, so it stays on the ground it was drawn on whichever
+   way the piece sits. A stroke across a seam becomes one edit on each tile,
+   and a tile it only grazes gets none: under half a percent of the stroke,
+   anywhere on the tile, once the rim lock has faded it.
+2. **The rim lock is a fade, not a dead band.** The weight is 0 on the rim
+   and 1 from `rimLockMM` (12, in the contract if it needs to change) in,
+   smoothstepped between, so a stroke near a seam does something and nothing
+   on the seam itself. Nothing is pushed below the 2 mm floor (§10) that was
+   above it.
+3. **A stroke is a line and a radius.** The weight is a cosine of the distance
+   to the line, so a raise is a ridge with a level crest, not a row of bumps.
+   Smooth eases towards a box average read from a frozen copy, so the order the
+   cells are visited in does not matter. Flatten goes to `toMM`. The tool
+   writes the height *on the table* where the stroke began, less each tile's
+   riser, so a terrace across two tiles is one height. Unknown ops are reported
+   and skipped, never guessed at.
+4. **The woods are edits too, replayed where the woods are planted.**
+   `clear` is a `where` filter on every wood on the tile. `plant` is a wood
+   of its own, kept off canopy already there, with its seed taken from the
+   stroke, so it keeps its trees whatever the map's seed.
+5. **A lake and a spring stay the fields they are.** The Refine tools write
+   the same `lakes.place` / `fountains.place` entries the tile view's tools
+   do; the generator already reads them. The handles drag those, and
+   volcanoes, flats and ridge points, along the ground.
+6. **The whole map rebuilds on every change, but not the ice.** The ground is
+   a pure function of `worldKey(spec, { ice: true })`, so the worker keeps the
+   last one and `buildMap` takes it when the key matches. A stroke then costs
+   the tiles alone: 0.9 s at draft, against 8–10 s with the ice. A test builds
+   the same bytes either way. This is a first slice of phase 6's `grow` cache.
+   The rest of phase 6, rerunning only the design that changed, is still to
+   come.
+7. **A stroke shows at once.** The same `applyGroundEdits` runs on the
+   heights the view is showing, so the ground moves when the pointer lets go.
+   The regrow then replaces it with the real replay; trees, lakes and springs
+   wait for that. In Refine a change of any kind grows the map again once
+   things settle (a drag counts once it ends), and a change made during a
+   build is grown next.
+8. **The brush follows the ground the pointer is over.** In perspective that
+   can be the far wall of a gorge, which is what the cursor shows, so it is
+   what happens. Left paints, right orbits, Shift-right pans; on a touch
+   screen one finger paints and two turn and zoom.
+9. **Undo is the editor's undo,** which is the spec before the stroke. The
+   inspector lists a tile's edits in the order they are replayed, each
+   removable, with Clear all.
+
+Left for later: rerunning only the edited design (phase 6), and strokes
+drawn on the 2D board.

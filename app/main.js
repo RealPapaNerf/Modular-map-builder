@@ -3,8 +3,9 @@
 // change, and everything on screen is drawn from that plan.
 //
 // Four stages over one spec: Draw it on the board and in a tile; Grow it
-// (the generator, in a worker) and look at it in 3D; Refine it (phase 3);
-// Print it. Nothing leaves the machine.
+// (the generator, in a worker) and look at it in 3D; Refine it by hand on the
+// 3D view, every stroke kept as an edit in the spec; Print it. Nothing leaves
+// the machine.
 //
 // The 3D view (viewer.js, three.js) is loaded the first time Grow is opened,
 // so drawing never waits for it. It shows what was grown, standing the way
@@ -17,8 +18,9 @@ import * as ops from './specops.js';
 import { readTheme, makeCamera, zoomAbout } from './view.js';
 import { boardBox, drawBoard, hitBoard } from './board.js';
 import { tileBox, drawTileView, drawPreview } from './tilecanvas.js';
-import { handles, hitHandle } from './features.js';
-import { BOARD_TOOLS, TILE_TOOLS, BOARD_GROUPS, TILE_GROUPS } from './tools.js';
+import { handles, hitHandle, localToBoard } from './features.js';
+import { BOARD_TOOLS, TILE_TOOLS, BOARD_GROUPS, TILE_GROUPS, REFINE_TOOLS, REFINE_GROUPS } from './tools.js';
+import { applyGroundEdits, GROUND_OPS, EDIT_DEFAULTS } from '../lib/edits.js';
 import { renderInspector } from './inspector.js';
 import { reportHTML, downloadsHTML, fmt, bytes, esc } from './report.js';
 
@@ -42,8 +44,8 @@ const state = {
   stage: 'draw',
   view: { mode: 'board', tile: null, zoom: 1, panX: 0, panY: 0 },
   boardView: null,
-  tool: { board: 'select', tile: 'select' },
-  palette: { riverSize: 'creek', fall: 10, riser: 'auto', woodKind: 'deciduous' },
+  tool: { board: 'select', tile: 'select', refine: 'select' },
+  palette: { riverSize: 'creek', fall: 10, riser: 'auto', woodKind: 'deciduous', brushWidth: 24, brushMM: 4, plantKind: 'deciduous' },
   selection: null,
   hover: null,
   gesture: null,
@@ -138,6 +140,7 @@ function record(label) {
   state.lastLabel = label;
   persist();
   wantWorld();
+  maybeRegrow();
 }
 
 function setSpec(next, label = 'edit', { keepJson = false } = {}) {
@@ -191,6 +194,7 @@ function restore() {
   replan();
   persist();
   wantWorld();
+  maybeRegrow();
   invalidate('all');
 }
 
@@ -247,7 +251,7 @@ function grow(mode = 'build') {
   state.busy = { mode, startedAt: Date.now(), progress: [], label: mode === 'check' ? 'Checking' : 'Growing', id: ++growId, specAt: state.spec };
   builder = builder || makeWorker(onBuild);
   builder.postMessage({ type: 'run', spec: state.spec, mode, pxPerTile, id: state.busy.id });
-  invalidate('left', 'status');
+  invalidate('left', 'status', 'stage');
 }
 
 function cancelGrow() {
@@ -297,6 +301,8 @@ function onBuild(msg) {
     const errs = msg.report.errors.length;
     say(`${msg.report.mode === 'check' ? 'Checked' : 'Grown'} in ${(msg.elapsedMS / 1000).toFixed(1)}s${errs ? ` — ${errs} error${errs > 1 ? 's' : ''} in the contract` : ''}.`, errs ? 'err' : 'ok');
     invalidate('all');
+    // In Refine, an edit made while that was growing is grown next.
+    maybeRegrow();
     return;
   }
   if (msg.type === 'heights') {
@@ -359,7 +365,10 @@ function ensureViewer() {
   loadViewer()
     .then((mod) => {
       try {
-        viewer = mod.createViewer({ canvas: el.view3d, overlay: el.overlay3d, theme: state.theme, onHover: hover3d, onPick: pick3d });
+        viewer = mod.createViewer({
+          canvas: el.view3d, overlay: el.overlay3d, theme: state.theme,
+          onHover: hover3d, onPick: pick3d, onStroke: stroke3d, onPlace: place3d, onHandle: handle3d,
+        });
       } catch (e) {
         // No WebGL: that is the browser, and it will not change.
         viewerFailed = { message: (e && e.message) || String(e), retry: false };
@@ -397,11 +406,133 @@ function plan3d() {
   return plan3dMemo.plan;
 }
 
+let toolKey = null;
 function sync3d() {
   if (!viewer) { ensureViewer(); return; }
   const g = state.grown;
   if (viewer.payload() !== g.tiles3d) viewer.setTiles(g.tiles3d);
   viewer.setBoard(plan3d(), { selection: state.selection, hover: state.hover });
+  // The tool only when it changes: handing it over again would drop a stroke in progress.
+  const vt = viewerTool();
+  const k = JSON.stringify(vt);
+  if (k !== toolKey) { viewer.setTool(vt); toolKey = k; }
+  if (vt?.kind === 'select') viewer.setHandles(handles3d());
+}
+
+/* ----------------------------------------------------------------- refine */
+
+// Refine works on the 3D view. A brushstroke is written into the spec as an
+// edit on every tile it reaches (specops.addStroke), shown at once on the
+// ground as it stands, and then the map is grown again so the edit is
+// replayed for real -- after the carve, before the lakes -- with the ground
+// kept from the last build so that is the tiles and not the ice. The whole
+// map rebuilds on every stroke at this stage; it is slow and it is correct.
+
+const refineTool = () => REFINE_TOOLS.find((t) => t.id === state.tool.refine) || REFINE_TOOLS[0];
+const rimLock = () => ops.contractOf(state.spec).rimLockMM ?? EDIT_DEFAULTS.rimLockMM;
+
+function setRefineTool(id) {
+  viewer?.cancelGesture();
+  state.tool.refine = id;
+  invalidate('left', 'canvas', 'stage');
+}
+
+/** What the viewer's pointer does: nothing but orbit and pick outside Refine. */
+function viewerTool() {
+  if (state.stage !== 'refine') return null;
+  const t = refineTool();
+  if (t.brush) return { kind: 'brush', radiusMM: state.palette.brushWidth / 2, lockMM: rimLock() };
+  if (t.place) return { kind: 'place' };
+  return { kind: 'select' };
+}
+
+/** The things the select tool can drag in 3D, in board mm, each tile's turned the way it sits. */
+function handles3d() {
+  const s = state.spec;
+  const { T } = ops.dims(s);
+  const out = [];
+  const world = (list, kind, at) => (list || []).forEach((x, i) => {
+    const p = at(x);
+    if (!Array.isArray(p)) return;
+    const b = ops.toBoard(s, p);
+    out.push({ key: `${kind}:${i}`, kind, index: i, x: b.x, y: b.y });
+  });
+  world(s.spine, 'spine', (p) => p);
+  world(s.volcanoes, 'volcano', (v) => v.at);
+  world(s.flats, 'flat', (f) => f.at);
+  const onTile = (list, kind) => (list || []).forEach((spot, i) => {
+    const p = ops.parseLabel(spot?.tile);
+    if (!p || !Array.isArray(spot.atMM)) return;
+    const b = localToBoard(T, p.col, p.row, ((Number(s.rot?.[ops.keyOf(p.col, p.row)]) || 0) % 4 + 4) % 4, spot.atMM[0], spot.atMM[1]);
+    out.push({ key: `${kind}:${i}`, kind, index: i, x: b.x, y: b.y });
+  });
+  onTile(s.lakes?.place, 'lake');
+  onTile(s.fountains?.place, 'springpoint');
+  return out;
+}
+
+/**
+ * Show a stroke on the ground at once, on the heights as they stand, before
+ * the build has replayed it: only the ground ops can be, the trees and the
+ * lakes wait for the regrow.
+ */
+function preview3d(labels) {
+  const g = state.grown;
+  if (!g?.tiles3d || !viewer) return;
+  for (const label of labels) {
+    const h = g.tiles3d.tiles.find((x) => x.label === label);
+    const list = state.spec.edits?.[label] || [];
+    const op = list[list.length - 1];
+    if (!h || !op || !GROUND_OPS.includes(op.op)) continue;
+    const values = Float32Array.from(h.heights);
+    applyGroundEdits({ nx: h.nx, ny: h.ny, step: h.step, values }, [op], { rimLockMM: rimLock() });
+    h.heights = values;
+    viewer.updateHeights(h.id, values);
+  }
+}
+
+function stroke3d(pts) {
+  const t = refineTool();
+  if (!t.brush || !pts.length || state.stage !== 'refine') return;
+  const p = state.palette;
+  const placements = state.plan.placements.map((q) => ({ col: q.col, row: q.row, rot: q.rot, label: q.label, riserMM: q.riserMM }));
+  let touched = [];
+  commit((s) => {
+    touched = ops.addStroke(s, placements, pts, {
+      op: t.id, radiusMM: p.brushWidth / 2, mm: p.brushMM, kind: p.plantKind, toWorldMM: pts[0].z,
+    });
+    ops.tidy(s);
+  }, `${t.label.toLowerCase()} by hand`);
+  if (!touched.length) { say('That stroke only reached the locked rim, so it moves nothing.', 'warn'); return; }
+  preview3d(touched);
+  say(`${t.label} on ${touched.join(', ')}. Growing again to replay it…`);
+}
+
+function place3d(hit) {
+  const t = refineTool();
+  if (!hit || hit.kind !== 'tile' || !t.place) return;
+  if (!state.plan.placements.some((q) => q.col === hit.col && q.row === hit.row)) return;
+  const at = [hit.localX, hit.localY];
+  let index = -1;
+  if (t.id === 'lake') commit((s) => { index = ops.addLake(s, hit.label, at); }, `lake on ${hit.label}`);
+  else commit((s) => { index = ops.addSpringPoint(s, hit.label, at); }, `spring on ${hit.label}`);
+  select({ type: t.id === 'lake' ? 'lake' : 'springpoint', index });
+}
+
+const HANDLE_NAMES = { spine: 'ridge point', volcano: 'volcano', flat: 'flat', lake: 'lake', springpoint: 'spring' };
+function handle3d(hd, hit, phase) {
+  if (hit) live((s) => ops.moveFeature(s, hd.kind, hd.index, hit));
+  if (phase === 'end') end(`move a ${HANDLE_NAMES[hd.kind] || hd.kind}`);
+}
+
+/** In Refine, the 3D view keeps up with the spec: grow again once it settles. */
+let regrowTimer = 0;
+function maybeRegrow() {
+  clearTimeout(regrowTimer);
+  if (state.stage !== 'refine' || !state.grown?.stale || !workersOK) return;
+  regrowTimer = setTimeout(() => {
+    if (state.stage === 'refine' && state.grown?.stale && !state.busy && liveBase === null) grow('build');
+  }, 350);
 }
 
 function hover3d(hit, px, py, dragging) {
@@ -531,7 +662,14 @@ function renderStage() {
     el.crumbs.append(back, here, note);
   } else if (state.stage !== 'print') {
     const three = show3d();
-    const text = state.grown?.stale
+    const rt = state.stage === 'refine' && three ? refineTool() : null;
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+    const text = rt && state.busy ? 'Growing again with the last change. The ground shows the stroke already; the build replays it for real.'
+      : rt?.brush ? (coarse ? 'One finger paints, two fingers turn and zoom. Red is the rim: a stroke fades to nothing there.'
+        : 'Left-drag paints; right-drag orbits, Shift+right-drag pans, scroll zooms. Red is the rim: a stroke fades to nothing there.')
+        : rt?.place ? 'Click a tile to place it there; right-drag orbits.'
+          : rt ? 'Drag a handle to move it along the ground; drag anywhere else to orbit.'
+            : state.grown?.stale
       ? (three ? 'The 3D view is from before the last change, turned the way the tiles are turned now. Grow again to see the new ground.'
         : 'The hillshade is from before the last change. Grow again to see the new ground.')
       : three ? (window.matchMedia?.('(pointer: coarse)').matches
@@ -696,13 +834,45 @@ function growLeft() {
 }
 
 function refineLeft() {
-  return [
-    h('h2', { class: 'panel-title' }, 'Refine'),
-    h('p', {}, 'Brushes and handles on the grown ground arrive in phase 3: raise, lower, smooth, flatten to a height, dig a lake, place a spring, plant or clear trees.'),
-    h('p', { class: 'hint' }, 'They will write an `edits` list into the spec, replayed after the river is carved and before the lakes, with the last 12 mm of the rim locked so every tile still proves its contract.'),
-    h('p', { class: 'hint' }, 'Until then, draw in Draw and grow in Grow: the spec is the same either way.'),
-    h('button', { type: 'button', onclick: () => setStage('draw') }, '← Draw'),
-  ];
+  const g = state.grown;
+  const b = state.busy;
+  const out = [h('h2', { class: 'panel-title' }, 'Refine')];
+  if (!g) {
+    out.push(
+      h('p', { class: 'hint' }, 'The brushes work on the grown ground, in 3D. Grow the map first.'),
+      h('div', { class: 'group' }, h('button', { type: 'button', class: 'primary', disabled: !!b || !workersOK, onclick: () => grow('build') }, 'Grow it')),
+      b ? h('p', { class: 'busy' }, `${b.label} — ${((Date.now() - b.startedAt) / 1000).toFixed(1)} s`) : null,
+    );
+    return out;
+  }
+  const tool = refineTool();
+  for (const [title, ids] of REFINE_GROUPS) {
+    out.push(h('div', { class: 'tool-sub' }, title));
+    out.push(h('div', { class: 'toolgrid' }, ids.map((id) => REFINE_TOOLS.find((t) => t.id === id)).filter(Boolean).map((t) => h('button', {
+      type: 'button', class: 'tool', 'aria-pressed': String(t.id === tool.id), title: `${t.label} (${t.key})`,
+      onclick: () => setRefineTool(t.id), 'data-tool': t.id,
+    }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, t.glyph), t.label, h('span', { class: 'key' }, t.key)))));
+  }
+  const pal = tool.palette ? tool.palette(api) : [];
+  out.push(h('div', { class: 'group palette' },
+    h('h2', { class: 'panel-title' }, tool.label),
+    h('p', { class: 'hint' }, tool.hint),
+    pal.map((p) => [
+      h('div', { class: 'chips', role: 'group', 'aria-label': `${tool.label} options` }, p.chips.map(([v, t]) => h('button', {
+        type: 'button', 'aria-pressed': String(String(v) === String(p.value)), onclick: () => p.pick(v), 'data-chip': String(v),
+      }, t))),
+      p.note ? h('p', { class: 'hint' }, p.note) : null,
+    ])));
+  // What happens after a stroke, and how long it takes: the tiles, not the ice.
+  const again = estimateSeconds({ ...state.spec, glacier: false }, 'build');
+  const n = Object.values(state.spec.edits || {}).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0);
+  out.push(h('div', { class: 'group' },
+    b ? [h('p', { class: 'busy' }, `${b.label} — ${((Date.now() - b.startedAt) / 1000).toFixed(1)} s`),
+      h('ol', { class: 'progress' }, b.progress.map((m, i) => h('li', { class: i === b.progress.length - 1 ? 'now' : null }, m)))]
+      : h('p', { class: g.stale ? 'warn-line' : 'hint' }, g.stale ? 'Growing again with the last change…' : `Grown with ${n ? `all ${n} edit${n > 1 ? 's' : ''}` : 'no edits yet'}.`),
+    h('p', { class: 'hint' }, `Every change here grows the map again, keeping the ground and the ice from last time: ${again < 2 ? 'about a second' : `about ${Math.round(again)} s`} at this mesh.${(Number(state.spec.meshMM) || 0.8) < 2.5 ? ' Refine on the draft mesh and print on a finer one: the edits are the same at any mesh.' : ''}`),
+    h('p', { class: 'hint' }, 'Edits are kept as strokes, not as the ground they changed, so a new seed or a new climate keeps every one. Select a tile to see its list.')));
+  return out;
 }
 
 function printLeft() {
@@ -1064,6 +1234,7 @@ window.addEventListener('keydown', (ev) => {
   if (mod || ev.altKey) return;
   if (ev.key === ' ') { spaceDown = true; ev.preventDefault(); return; }
   if (ev.key === 'Escape') {
+    if (state.stage === 'refine' && viewer) viewer.cancelGesture();
     if (state.gesture?.cancel) { state.gesture.cancel(); state.gesture = null; invalidate('canvas'); return; }
     if (!el.sentences.hidden) { el.sentences.hidden = true; return; }
     if (state.view.mode === 'tile') { closeTile(); return; }
@@ -1077,6 +1248,11 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === '-') { zoomBy(0.8); return; }
   // A turn is play, so it works on the grown map too: nothing has to be grown again.
   if ((ev.key === 'r' || ev.key === 'R') && show3d()) { turnUnderPointer(ev.shiftKey); return; }
+  if (state.stage === 'refine') {
+    const t = REFINE_TOOLS.find((x) => x.key.toLowerCase() === ev.key.toLowerCase());
+    if (t) setRefineTool(t.id);
+    return;
+  }
   if (state.stage !== 'draw') return;
   if (ev.key === 'r' || ev.key === 'R') { turnUnderPointer(ev.shiftKey); return; }
   const list = state.view.mode === 'tile' ? TILE_TOOLS : BOARD_TOOLS;
@@ -1099,6 +1275,8 @@ function setStage(stage) {
     if (viewerFailed?.retry) viewerFailed = null;
     loadViewer().catch(() => {});
   }
+  if (stage !== 'refine') clearTimeout(regrowTimer);
+  maybeRegrow();
   invalidate('all');
 }
 for (const b of document.querySelectorAll('.stages button')) b.addEventListener('click', () => setStage(b.dataset.stage));

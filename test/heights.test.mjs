@@ -8,7 +8,7 @@ import { buildMap } from '../lib/build.js';
 import { plan } from '../lib/board.js';
 import {
   tileHeights, transferables, waterSurface, groundArrays, gridIndex, wallArrays, rimLine, waterArrays,
-  proxyArrays, sampleHeight, edgeTop, groundColour, worldSpan, GROUND, RIVER, STILL, WOOD, RIVER_DEPTH_MM,
+  proxyArrays, sampleHeight, edgeTop, groundColour, worldSpan, lockBandArrays, GROUND, RIVER, STILL, WOOD, RIVER_DEPTH_MM,
 } from '../app/heights.js';
 
 /** A 5 x 5 tile, 200 mm across, standing on two plates. */
@@ -244,4 +244,25 @@ test('on a real build every carved cell is drawn as something, and the river run
   }
   const a1 = tileHeights(r.tiles.find((t) => t.label === 'A1'));
   assert.ok(a1.kind.some((k) => k === WOOD), 'the wood is drawn as wood');
+});
+
+test('the rim lock band covers the last 12 mm of every rim, opaque at the rim and clear where the lock ends', () => {
+  const t = fakeTile();
+  t.local = makeField(81, 81, 2.5, 0, 0);
+  t.local.values.fill(20);
+  t.wet = new Uint8Array(81 * 81);
+  t.lakes = [];
+  t.springs = [];
+  t.woods = [];
+  const h = tileHeights(t);
+  const b = lockBandArrays(h, 12, [1, 0, 0], { alpha: 0.5 });
+  const alpha = (i, j) => b.color[(j * 81 + i) * 4 + 3];
+  assert.equal(alpha(0, 40), 0.5);
+  assert.equal(alpha(40, 40), 0);
+  assert.ok(alpha(2, 40) > 0 && alpha(2, 40) < 0.5);
+  assert.equal(alpha(5, 40), 0, '12.5 mm in is past the lock');
+  // Only the cells near the rim carry triangles: a ring five cells deep.
+  const cells = b.index.length / 6;
+  assert.equal(cells, 80 * 80 - 70 * 70);
+  assert.ok(Math.abs(b.position[(40 * 81 + 40) * 3 + 2] - 20.3) < 1e-6, 'a hair above the ground');
 });
