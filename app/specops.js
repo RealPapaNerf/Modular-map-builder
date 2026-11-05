@@ -588,6 +588,46 @@ export function addLake(spec, label, atMM, o = {}) {
 }
 
 /**
+ * Water PAINTED along a stroke, split across whatever tiles it crossed.
+ *
+ * One stroke becomes one lake per tile, each carrying the piece of the path
+ * that fell inside it, so a lake drawn across a seam comes out as two
+ * designs that still mate -- the same rule rivers and woods already follow.
+ *
+ * A stroke of a single point is written as a plain `atMM` lake instead,
+ * which is exactly what clicking used to do. That is not a special case for
+ * its own sake: a point lake keeps its drag handle (see features.js, which
+ * skips anything without an atMM), so a click still gives something you can
+ * pick up and move, and only a real drag gives up the handle in exchange
+ * for a shape.
+ */
+export function addWaterStroke(spec, placements, pts, o = {}) {
+  const { T } = dims(spec);
+  const R = Number(o.radiusMM);
+  if (!pts.length || !(R > 0)) return [];
+  const touched = [];
+  for (const p of placements) {
+    const local = pts.map(({ x, y }) => intoTile(T, p.col, p.row, p.rot, x, y));
+    let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+    for (const q of local) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
+    if (x1 + R <= 0 || y1 + R <= 0 || x0 - R >= T || y0 - R >= T) continue;
+    // Only the part of the stroke that actually fell on this tile.
+    const inside = local.filter((q) => q.x >= -R && q.y >= -R && q.x <= T + R && q.y <= T + R);
+    if (!inside.length) continue;
+    const path = thin(inside.map((q) => [r1(q.x), r1(q.y)]), Math.max(0.5, R * 0.05));
+    spec.lakes = spec.lakes || {};
+    spec.lakes.place = spec.lakes.place || [];
+    if (path.length === 1) {
+      spec.lakes.place.push({ tile: p.label, atMM: path[0], radiusMM: r1(R) });
+    } else {
+      spec.lakes.place.push({ tile: p.label, pathMM: path, radiusMM: r1(R) });
+    }
+    touched.push(p.label);
+  }
+  return touched;
+}
+
+/**
  * A spring placed at a point. If the map had no fountains at all, this
  * turns them on for this spring only: `auto` would otherwise put one on
  * every open inlet too, which is a different thing from what was clicked.
@@ -811,7 +851,7 @@ const ORDERS = {
   flats: ['at', 'radiusM', 'elevM'],
   lakes: ['fillHollows', 'depthMM', 'shoreMM', 'profile', 'place'],
   fountains: ['auto', 'tubeOdMM', 'poolRadiusMM', 'place'],
-  place: ['tile', 'edge', 'atMM'],
+  place: ['tile', 'edge', 'atMM', 'pathMM', 'radiusMM', 'depthMM'],
   contract: ['tileMM', 'plateMM', 'outletZMM', 'edgeLandMM'],
 };
 

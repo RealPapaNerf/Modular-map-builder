@@ -478,7 +478,10 @@ const tileSelect = {
 // and main.js writes what it did into the spec. What is here is what the
 // panel shows: the tools, their keys, and their palettes.
 
-const WIDTHS = [12, 24, 40, 64];
+// Round 10 mm steps, fine to broad. 10 is a liner, 120 is most of the way
+// across a 200 mm tile -- the point being that the wide end is wide enough
+// to lay down a whole landform in one pass rather than hatching it in.
+const WIDTHS = [10, 20, 30, 50, 80, 120];
 const widthChips = (api) => ({
   chips: WIDTHS.map((w) => [w, `${w}`]),
   value: api.state.palette.brushWidth,
@@ -518,8 +521,9 @@ export const REFINE_TOOLS = [
     palette: (api) => [widthChips(api)],
   },
   {
-    id: 'lake', label: 'Lake', glyph: '◌', key: 'K', place: true,
-    hint: 'Click where a lake should be. It fills the ground that is low round that point.',
+    id: 'lake', label: 'Water', glyph: '◌', key: 'K', brush: true,
+    hint: 'Drag to paint water along the stroke, at the brush width. Its surface sits at the lowest ground under the stroke, so painting uphill leaves the water where it can actually stand. A single click still drops a round lake you can pick up and move.',
+    palette: (api) => [widthChips(api)],
   },
   {
     id: 'springpoint', label: 'Spring', glyph: '◉', key: 'S', place: true,

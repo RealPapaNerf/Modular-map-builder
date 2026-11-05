@@ -46,7 +46,7 @@ const state = {
   view: { mode: 'board', tile: null, zoom: 1, panX: 0, panY: 0 },
   boardView: null,
   tool: { board: 'select', tile: 'select', refine: 'select' },
-  palette: { riverSize: 'creek', fall: 10, riser: 'auto', woodKind: 'deciduous', brushWidth: 24, brushMM: 4, plantKind: 'deciduous' },
+  palette: { riverSize: 'creek', fall: 10, riser: 'auto', woodKind: 'deciduous', brushWidth: 30, brushMM: 4, plantKind: 'deciduous' },
   selection: null,
   hover: null,
   gesture: null,
@@ -551,6 +551,20 @@ function stroke3d(pts) {
   const p = state.palette;
   const placements = state.plan.placements.map((q) => ({ col: q.col, row: q.row, rot: q.rot, label: q.label, riserMM: q.riserMM }));
   let touched = [];
+  // Water is painted into lakes.place rather than into edits: a lake is
+  // already a thing this format knows how to carve, hold epoxy in and
+  // report, and a second parallel notion of standing water would have to
+  // learn all of that again.
+  if (t.id === 'lake') {
+    commit((s) => {
+      touched = ops.addWaterStroke(s, placements, pts, { radiusMM: p.brushWidth / 2 });
+      ops.tidy(s);
+    }, 'paint water');
+    if (!touched.length) { say('That stroke did not land on any tile.', 'warn'); return; }
+    preview3d(touched);
+    say(`Water on ${touched.join(', ')}. Growing again to carve it…`);
+    return;
+  }
   commit((s) => {
     touched = ops.addStroke(s, placements, pts, {
       op: t.id, radiusMM: p.brushWidth / 2, mm: p.brushMM, kind: p.plantKind,

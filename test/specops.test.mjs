@@ -372,3 +372,38 @@ test('a world feature dragged on a turned tile goes back through that tile\'s tu
   ops.moveFeature(s, 'spine', 0, { x: 100, y: 100 }); // A1 is not turned
   assert.deepEqual(s.spine[0], [100 / 600, 100 / 600].map((q) => Math.round(q * 1e6) / 1e6));
 });
+
+test('painting water writes a lake per tile the stroke crossed', () => {
+  const s = ops.blankSpec();
+  ops.growBoard(s, 'E');
+  const placements = [
+    { col: 0, row: 0, rot: 0, label: 'A1', riserMM: 0 },
+    { col: 1, row: 0, rot: 0, label: 'B1', riserMM: 0 },
+  ];
+  // A stroke straight across the seam between A1 and B1.
+  const pts = [{ x: 60, y: 100 }, { x: 200, y: 100 }, { x: 340, y: 100 }];
+  const touched = ops.addWaterStroke(s, placements, pts, { radiusMM: 15 });
+  assert.deepEqual(touched.sort(), ['A1', 'B1'], 'both tiles get their piece');
+  const places = s.lakes.place;
+  assert.equal(places.length, 2);
+  for (const p of places) {
+    assert.ok(Array.isArray(p.pathMM) && p.pathMM.length >= 2, `${p.tile} should carry a path`);
+    assert.equal(p.radiusMM, 15);
+    assert.ok(!p.atMM, 'a painted lake has no single centre');
+    // Every point is in that tile's own millimetres, not the board's.
+    for (const [x] of p.pathMM) assert.ok(x > -20 && x < 220, `${p.tile} point ${x} is not tile-local`);
+  }
+});
+
+test('a single click still writes a round lake with a handle', () => {
+  // The drag handle in features.js keys off atMM, so a click has to keep
+  // writing one or clicking a lake down stops giving you something you can
+  // pick up and move.
+  const s = ops.blankSpec();
+  const placements = [{ col: 0, row: 0, rot: 0, label: 'A1', riserMM: 0 }];
+  ops.addWaterStroke(s, placements, [{ x: 100, y: 100 }], { radiusMM: 20 });
+  const spot = s.lakes.place[0];
+  assert.ok(Array.isArray(spot.atMM), 'a click gives a point lake');
+  assert.ok(!spot.pathMM);
+  assert.equal(spot.radiusMM, 20);
+});

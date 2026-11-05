@@ -164,3 +164,57 @@ test('a hollow too small to bother with is left alone', () => {
   assert.equal(r.lakes.length, 0);
   assert.deepEqual(Array.from(f.values), Array.from(before));
 });
+
+// ---------------------------------------------------------------------------
+// Water painted along a stroke, rather than placed at a point.
+// ---------------------------------------------------------------------------
+
+test('a painted lake follows its stroke instead of being a disc', () => {
+  // A long thin stroke should give a long thin lake. The test that matters
+  // is the shape: wet far along the stroke, dry well off to the side at the
+  // same distance from the middle, which a disc could never do.
+  const f = makeField(201, 201, 1);
+  fill(f, () => 40);
+  const r = placeLake(f, {
+    ...LAKE_DEFAULTS,
+    pathMM: [[40, 100], [160, 100]],
+    radiusMM: 14,
+    depthMM: 6,
+    allowRim: true,
+  });
+  assert.ok(!r.skipped, `should have carved: ${r.skipped}`);
+  const wetAt = (x, y) => !!r.wet[Math.round(y) * 201 + Math.round(x)];
+  assert.ok(wetAt(100, 100), 'the middle of the stroke is water');
+  assert.ok(wetAt(50, 100) && wetAt(150, 100), 'and so are both ends');
+  // 60 mm off the line, but only 40 mm from the stroke's midpoint: a disc
+  // big enough to reach the ends would cover this. The stroke must not.
+  assert.ok(!wetAt(100, 160), 'well off to the side is dry');
+  assert.ok(!wetAt(100, 40), 'on both sides');
+});
+
+test('painted water sits at the lowest ground under the stroke', () => {
+  // Water finds its level. Painting up a slope must not perch the surface at
+  // whatever height the pointer went down at, or the lake hangs on the hill.
+  // A FRESH field each time: placeLake carves in place, so reusing one
+  // would mean the second call read ground the first had already dug out.
+  const slope = () => { const f = makeField(201, 201, 1); fill(f, (x) => 20 + x * 0.1); return f; };
+  const up = placeLake(slope(), { ...LAKE_DEFAULTS, pathMM: [[40, 100], [160, 100]], radiusMM: 12, depthMM: 5, allowRim: true });
+  const down = placeLake(slope(), { ...LAKE_DEFAULTS, pathMM: [[160, 100], [40, 100]], radiusMM: 12, depthMM: 5, allowRim: true });
+  assert.ok(!up.skipped && !down.skipped);
+  // Drawn uphill or downhill, the same stroke gives the same surface.
+  assert.equal(up.surfaceZ, down.surfaceZ,
+    `the direction the stroke was drawn must not change the water level: ${up.surfaceZ} against ${down.surfaceZ}`);
+  // And it is the LOW end that sets it: ground there is 24 mm, not the
+  // 36 mm at the top of the stroke.
+  assert.ok(up.surfaceZ < 30, `surface should sit near the low end, got ${up.surfaceZ}`);
+});
+
+test('a one-point stroke is still a plain round lake', () => {
+  const f = makeField(201, 201, 1);
+  fill(f, () => 40);
+  const r = placeLake(f, { ...LAKE_DEFAULTS, pathMM: [[100, 100]], radiusMM: 20, depthMM: 6, allowRim: true });
+  assert.ok(!r.skipped, `should have carved: ${r.skipped}`);
+  const wetAt = (x, y) => !!r.wet[Math.round(y) * 201 + Math.round(x)];
+  assert.ok(wetAt(100, 100));
+  assert.ok(wetAt(100, 112) && wetAt(112, 100), 'round, so wet in every direction');
+});
