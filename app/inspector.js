@@ -1,20 +1,19 @@
 // inspector.js — the parameters of what is selected, and nothing else.
 //
-// Nothing selected is the map itself: its seed and scale, the ground, the
+// Nothing selected is the module itself: its seed and scale, the ground, the
 // ice, the water, the woods that cover it all and the contract. Every field
 // writes the spec through the api and reads back from it, so the JSON drawer
-// and the board change with it. A field left empty is a key taken out: the
+// and the canvas change with it. A field left empty is a key taken out: the
 // default, as the CLI would read it.
 
-import { EDGES, SIZES, FALLS, portFloor, sizeFor, makeContract } from '../lib/contract.js';
+import { EDGES, WIDTHS, makeContract } from '../lib/contract.js';
+import { CHANNEL_DEFAULTS } from '../lib/channel.js';
 import { LAKE_DEFAULTS, PROFILES } from '../lib/lake.js';
 import { FOUNTAIN_DEFAULTS } from '../lib/fountain.js';
 import { CANOPY_DEFAULTS } from '../lib/canopy.js';
-import { facingEdge } from '../lib/board.js';
 import { DEFAULT_M_PER_MM } from '../lib/scale.js';
 import * as ops from './specops.js';
 
-const SIZE_IDS = Object.keys(SIZES);
 const SIDE = { N: 'north', E: 'east', S: 'south', W: 'west' };
 
 /* ------------------------------------------------------------------ dom */
@@ -77,18 +76,17 @@ function choose(api, label, { options, get, set, id }) {
 /** A row of buttons, one of which is current. */
 function seg(label, options, current, pick, { wide = false, id = null } = {}) {
   const box = h('span', { class: 'seg', role: 'group', 'aria-label': label, 'data-field': id || label },
-    options.map(([v, t]) => h('button', {
-      type: 'button', 'aria-pressed': String(String(v) === String(current)),
-      onclick: () => pick(v),
-    }, t)));
+    options.map(([v, t]) => h('button', { type: 'button', 'aria-pressed': String(String(v) === String(current)), onclick: () => pick(v) }, t)));
   return h('div', { class: `field${wide ? ' wide' : ''}` }, h('span', {}, label), h('span', { class: 'ctl' }, box));
 }
 
 const group = (title, ...kids) => h('fieldset', {}, h('legend', {}, title), ...kids);
 const facts = (rows) => h('ul', { class: 'facts' }, rows.filter(Boolean).map(([k, v]) => h('li', {}, h('span', {}, k), h('span', {}, v))));
 const del = (label, fn) => h('button', { type: 'button', class: 'danger', onclick: fn }, label);
+const put = (list, i, k) => (x, v) => { if (v === undefined) delete x[list][i][k]; else x[list][i][k] = v; };
+const at = (list, i, k) => (x) => x[list]?.[i]?.[k];
 
-/* ------------------------------------------------------------- panels */
+/* ------------------------------------------------------------------ root */
 
 export function renderInspector(root, api) {
   const st = api.state;
@@ -96,49 +94,47 @@ export function renderInspector(root, api) {
   let body;
   try {
     switch (sel?.type) {
-      case 'tile': body = tilePanel(api, sel); break;
-      case 'river': body = riverPanel(api, sel); break;
-      case 'seam': body = seamPanel(api, sel); break;
+      case 'channel': body = channelPanel(api, sel); break;
       case 'spine': body = spinePanel(api); break;
       case 'volcano': body = volcanoPanel(api, sel); break;
       case 'flat': body = flatPanel(api, sel); break;
       case 'lake': body = lakePanel(api, sel); break;
       case 'springpoint': body = springPanel(api, sel); break;
       case 'wood': body = woodPanel(api, sel); break;
-      case 'corner': body = cornerPanel(api, sel); break;
-      default: body = mapPanel(api);
+      default: body = modulePanel(api);
     }
   } catch (err) {
-    // A selection the spec no longer has (undone, deleted in the JSON): show the map.
+    // A selection the spec no longer has (undone, deleted in the JSON): show the module.
     console.warn(err);
-    body = mapPanel(api);
+    body = modulePanel(api);
   }
   const focused = document.activeElement?.closest?.('#inspector') ? document.activeElement.getAttribute('data-field') : null;
   root.replaceChildren(h('div', { class: 'insp' }, body));
   if (focused) root.querySelector(`[data-field="${CSS.escape(focused)}"]`)?.focus();
 }
 
-function mapPanel(api) {
+/* ---------------------------------------------------------------- module */
+
+function modulePanel(api) {
   const s = api.state.spec;
-  const { cols, rows, T } = ops.dims(s);
-  // The board's longest side in mm; the size placeholders are fractions of it.
-  const boardSpanMM = Math.max(cols, rows) * T;
+  const { T } = ops.dims(s);
   const c = makeContract(s.contract || {});
-  const p = api.state.plan;
-  const springs = p.springs.length;
+  const say = api.state.say;
   return [
-    h('h2', {}, s.name || 'Untitled map'),
-    h('p', { class: 'sub' }, `${cols} × ${rows} tiles of ${T} mm, on ${c.plateMM} mm plates. Nothing selected, so this is the map.`),
-    group('Map',
+    h('h2', {}, s.name || 'Untitled module'),
+    h('p', { class: 'sub' }, `One ${T} mm module. Nothing selected, so this is the module.`),
+    say ? h('p', { class: 'say-one' }, say.sentences.map((x) => x.text).join(' ')) : null,
+    group('Module',
       text(api, 'Name', { get: (x) => x.name, set: (x, v) => { if (v === undefined) delete x.name; else x.name = v; } }),
       h('div', { class: 'field' }, h('span', {}, 'Seed'), h('span', { class: 'ctl' },
         numInput(api, 'Seed', (x) => x.seed, (x, v) => { x.seed = v ?? 1; }, { step: 1, min: 0 }),
-        h('button', { type: 'button', class: 'mini', title: 'A different map, same rules', onclick: () => api.commit((x) => { x.seed = Math.floor(Math.random() * 100000); }, 'roll the seed') }, 'Roll'))),
-      num(api, 'Scale', { get: (x) => x.metresPerMM, set: (x, v) => { if (v === undefined) delete x.metresPerMM; else x.metresPerMM = v; }, unit: 'm/mm', step: 1, min: 1, placeholder: String(DEFAULT_M_PER_MM), title: 'Metres of real ground per millimetre of print. The only place metres appear: it is what lets the glacier behave like a glacier. Everything else you type is millimetres.' }),
+        h('button', { type: 'button', class: 'mini', title: 'A different module, same rules', onclick: () => api.commit((x) => { x.seed = Math.floor(Math.random() * 100000); }, 'roll the seed') }, 'Roll'))),
+      num(api, 'Scale', { get: (x) => x.metresPerMM, set: (x, v) => { if (v === undefined) delete x.metresPerMM; else x.metresPerMM = v; }, unit: 'm/mm', step: 1, min: 1, placeholder: String(DEFAULT_M_PER_MM), title: 'Metres of real ground per millimetre of print. The only place metres appear: it is what lets the glacier behave like a glacier.' }),
+      num(api, 'Margin', { get: (x) => x.marginMM, set: (x, v) => { if (v === undefined) delete x.marginMM; else x.marginMM = v; }, unit: 'mm', step: 10, min: 0, placeholder: String(T / 2), title: 'How far the world runs past the rim on every side, so the ice has somewhere to come from. Grown, not printed.' }),
     ),
     group('Ground',
       num(api, 'Mountains', { get: (x) => x.spineHeightMM, set: (x, v) => { if (v === undefined) delete x.spineHeightMM; else x.spineHeightMM = v; }, unit: 'mm', step: 1, min: 0, placeholder: '60', title: 'How far the ridge stands above the low ground, on the print' }),
-      num(api, 'Ridge width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.22)) }),
+      num(api, 'Ridge width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.45)) }),
       num(api, 'Roughness', { get: (x) => x.roughness, set: (x, v) => { if (v === undefined) delete x.roughness; else x.roughness = v; }, step: 0.02, min: 0, max: 1, placeholder: '0.22' }),
     ),
     group('Ice',
@@ -146,9 +142,20 @@ function mapPanel(api) {
       s.glacier !== false ? [
         num(api, 'Cycles', { get: (x) => x.glacier?.cycles, set: (x, v) => ops.setPath(x, 'glacier.cycles', v), min: 1, max: 200, placeholder: 'default' }),
         num(api, 'Snowline swing', { get: (x) => x.glacier?.elaSwingMM, set: (x, v) => ops.setPath(x, 'glacier.elaSwingMM', v), unit: 'mm', step: 1, min: 0, placeholder: '18', title: 'How far the snowline moves either side of its mean. This is what leaves a staircase of cirques and a line of recessional moraines instead of one clean trough.' }),
-        num(api, 'Till kept', { get: (x) => x.glacier?.tillYield, set: (x, v) => ops.setPath(x, 'glacier.tillYield', v), step: 0.05, min: 0, max: 1, placeholder: '0.55', title: 'How much of the rock the ice cuts it carries and puts back down as moraines, rather than exporting as rock flour. 0 is the old behaviour: no moraines, and only rock-basin lakes.' }),
+        num(api, 'Till kept', { get: (x) => x.glacier?.tillYield, set: (x, v) => ops.setPath(x, 'glacier.tillYield', v), step: 0.05, min: 0, max: 1, placeholder: '0.55', title: 'How much of the rock the ice cuts it carries and puts back down as moraines, rather than exporting as rock flour.' }),
         num(api, 'Advances', { get: (x) => x.glacier?.glacialCycles, set: (x, v) => ops.setPath(x, 'glacier.glacialCycles', v), min: 1, max: 12, placeholder: '3' }),
+        h('p', { class: 'hint' }, 'The ice carves, retreats, and melts out entirely before the module is cut: what is printed is the bed it left.'),
       ] : null,
+    ),
+    group('Channels',
+      s.channels?.length ? h('ul', { class: 'facts' }, s.channels.map((ch, i) => {
+        const ends = ops.channelEnds(s, ch);
+        return h('li', { class: 'pick', onclick: () => api.select({ type: 'channel', index: i }) },
+          h('span', {}, ch.name || `channel ${i + 1}`),
+          h('span', {}, ends ? `${ends.from || '·'} → ${ends.to || '·'}` : 'will not cut'));
+      })) : h('p', { class: 'hint' }, 'None yet. Draw one with the Channel tool: start or finish on a port to cross the rim.'),
+      num(api, 'Default width', { get: (x) => x.channelDefaults?.widthMM, set: (x, v) => ops.setPath(x, 'channelDefaults.widthMM', v), unit: 'mm', step: 5, min: 4, placeholder: String(CHANNEL_DEFAULTS.widthMM) }),
+      num(api, 'Default depth', { get: (x) => x.channelDefaults?.depthMM, set: (x, v) => ops.setPath(x, 'channelDefaults.depthMM', v), unit: 'mm', step: 1, min: 0.5, placeholder: String(c.channelDepthMM) }),
     ),
     group('Standing water',
       check(api, 'Tarns in hollows', { get: (x) => x.lakes?.fillHollows !== false, set: (x, on) => ops.setPath(x, 'lakes.fillHollows', on) }),
@@ -157,23 +164,23 @@ function mapPanel(api) {
       choose(api, 'Bed', { options: [['', 'default (dish)'], ...PROFILES.map((x) => [x, x])], get: (x) => x.lakes?.profile, set: (x, v) => ops.setPath(x, 'lakes.profile', v) }),
     ),
     group('Springs',
-      check(api, 'On every open inlet', {
+      check(api, 'At the start of every channel', {
         get: (x) => !!x.fountains && x.fountains.auto !== false,
-        set: (x, on) => { x.fountains = { ...(x.fountains || {}), auto: on }; if (on) x.fountains.place = (x.fountains.place || []).filter((sp) => sp.atMM); if (x.fountains.place && !x.fountains.place.length) delete x.fountains.place; },
-        title: 'Where a river comes in from nowhere, the pump has to put the water',
+        set: (x, on) => { x.fountains = { ...(x.fountains || {}), auto: on }; },
+        title: 'Where a channel starts, the pump has to put the water',
       }),
       num(api, 'Tube OD', { get: (x) => x.fountains?.tubeOdMM, set: (x, v) => ops.setPath(x, 'fountains.tubeOdMM', v), unit: 'mm', step: 0.1, min: 3, placeholder: String(FOUNTAIN_DEFAULTS.tubeOdMM) }),
       num(api, 'Pool', { get: (x) => x.fountains?.poolRadiusMM, set: (x, v) => ops.setPath(x, 'fountains.poolRadiusMM', v), unit: 'mm', step: 0.5, min: 5, placeholder: String(FOUNTAIN_DEFAULTS.poolRadiusMM) }),
-      h('p', { class: 'hint' }, springs ? `${springs} spring${springs > 1 ? 's' : ''} on the board.` : 'No springs: the rivers are dry until one goes on. Use the spring tool on an open inlet.'),
     ),
-    group('Woods over the whole map', woodLayers(api)),
+    group('Woods over the whole module', woodLayers(api)),
     group('Contract',
-      num(api, 'Tile', { get: (x) => x.contract?.tileMM, set: (x, v) => setContract(x, 'tileMM', v), unit: 'mm', step: 10, min: 50, placeholder: String(c.tileMM) }),
-      num(api, 'Plate', { get: (x) => x.contract?.plateMM, set: (x, v) => setContract(x, 'plateMM', v), unit: 'mm', step: 1, min: 2, placeholder: String(c.plateMM) }),
-      num(api, 'Outlet floor', { get: (x) => x.contract?.outletZMM, set: (x, v) => setContract(x, 'outletZMM', v), unit: 'mm', step: 1, min: 1, placeholder: String(c.outletZMM), title: 'Where the river leaves a tile, above its bottom. The inlet is this plus the fall.' }),
-      num(api, 'Land datum', { get: (x) => x.contract?.edgeLandMM, set: (x, v) => setContract(x, 'edgeLandMM', v), unit: 'mm', step: 1, min: 4, placeholder: String(c.edgeLandMM) }),
-      h('p', { class: 'hint' }, `A river leaves at ${c.outletZMM} mm and arrives at ${c.outletZMM} + its fall. Every tile reads these, so changing one changes them all.`),
+      num(api, 'Module', { get: (x) => x.contract?.tileMM, set: (x, v) => setContract(x, 'tileMM', v), unit: 'mm', step: 10, min: 50, placeholder: String(c.tileMM) }),
+      num(api, 'Rim', { get: (x) => x.contract?.edgeLandMM, set: (x, v) => setContract(x, 'edgeLandMM', v), unit: 'mm', step: 1, min: 4, placeholder: String(c.edgeLandMM), title: 'How high every edge stands. Every module built to this contract has the same rim, so they mate.' }),
+      num(api, 'Port width', { get: (x) => x.contract?.portWidthMM, set: (x, v) => setContract(x, 'portWidthMM', v), unit: 'mm', step: 5, min: 6, placeholder: String(c.portWidthMM), title: 'A channel crossing the rim is this wide there, whatever it is inland.' }),
+      num(api, 'Channel depth', { get: (x) => x.contract?.channelDepthMM, set: (x, v) => setContract(x, 'channelDepthMM', v), unit: 'mm', step: 1, min: 1, placeholder: String(c.channelDepthMM), title: 'How deep a channel is below the ground, and how deep the port is.' }),
+      h('p', { class: 'hint' }, `Every edge stands ${c.edgeLandMM} mm high; a channel crosses it ${c.portWidthMM} mm wide and ${Math.round(c.edgeLandMM - c.channelDepthMM) > 0 ? c.channelDepthMM : c.edgeLandMM - 3} mm deep, in the middle of the side. Any module built to this sits against any other.`),
     ),
+    editsGroup(api),
     designNotes(api),
   ];
 }
@@ -182,7 +189,7 @@ function mapPanel(api) {
 function setContract(x, key, v) {
   const d = makeContract({});
   const cur = x.contract || {};
-  x.contract = { tileMM: cur.tileMM ?? d.tileMM, plateMM: cur.plateMM ?? d.plateMM, outletZMM: cur.outletZMM ?? d.outletZMM, edgeLandMM: cur.edgeLandMM ?? d.edgeLandMM, ...cur };
+  x.contract = { tileMM: cur.tileMM ?? d.tileMM, edgeLandMM: cur.edgeLandMM ?? d.edgeLandMM, portWidthMM: cur.portWidthMM ?? d.portWidthMM, channelDepthMM: cur.channelDepthMM ?? d.channelDepthMM, ...cur };
   if (v === undefined) delete x.contract[key]; else x.contract[key] = v;
 }
 
@@ -207,198 +214,79 @@ function woodLayers(api) {
   out.push(h('div', { class: 'row-btns' },
     h('button', { type: 'button', class: 'mini', onclick: () => api.commit((x) => ops.addWoodLayer(x, 'conifer'), 'add conifers') }, '+ Conifers'),
     h('button', { type: 'button', class: 'mini', onclick: () => api.commit((x) => ops.addWoodLayer(x, 'deciduous'), 'add broadleaf') }, '+ Broadleaf')));
-  if (!layers.length) out.unshift(h('p', { class: 'hint' }, 'None yet. A wood drawn on one tile is in that tile’s inspector.'));
+  if (!layers.length) out.unshift(h('p', { class: 'hint' }, 'None yet. A wood drawn as a shape has its own inspector.'));
   return out;
 }
 
 function woodFields(api, i) {
-  const at = (k) => (x) => x.canopy?.[i]?.[k];
-  const put = (k) => (x, v) => { if (v === undefined) delete x.canopy[i][k]; else x.canopy[i][k] = v; };
   const id = (k) => `canopy.${i}.${k}`;
   return [
-    choose(api, 'Kind', { options: [['deciduous', 'broadleaf'], ['conifer', 'conifer']], get: at('kind'), set: put('kind'), id: id('kind') }),
-    num(api, 'Crown', { get: at('crownMM'), set: put('crownMM'), unit: 'mm', step: 0.5, min: 2, placeholder: String(CANOPY_DEFAULTS.crownMM), id: id('crownMM') }),
-    num(api, 'Height', { get: at('heightMM'), set: put('heightMM'), unit: 'mm', step: 0.5, min: 1, placeholder: String(CANOPY_DEFAULTS.heightMM), id: id('heightMM') }),
-    num(api, 'Density', { get: at('density'), set: put('density'), step: 0.01, min: 0.01, max: 1, placeholder: '0.4', id: id('density'), title: 'The fraction of ground under canopy: 0.05 scattered, 0.55 a proper wood, 1 closed' }),
-    num(api, 'Lowest', { get: at('minZMM'), set: put('minZMM'), unit: 'mm', step: 1, placeholder: 'any', id: id('minZMM'), title: 'World height, mm' }),
-    num(api, 'Treeline', { get: at('maxZMM'), set: put('maxZMM'), unit: 'mm', step: 1, placeholder: 'none', id: id('maxZMM'), title: 'World height, mm' }),
-    num(api, 'Thinning', { get: at('thinningMM'), set: put('thinningMM'), unit: 'mm', step: 1, min: 0, placeholder: '0', id: id('thinningMM') }),
-    num(api, 'Max slope', { get: at('maxSlopeDeg'), set: put('maxSlopeDeg'), unit: '°', step: 1, min: 0, max: 90, placeholder: 'any', id: id('maxSlopeDeg') }),
+    choose(api, 'Kind', { options: [['deciduous', 'broadleaf'], ['conifer', 'conifer']], get: at('canopy', i, 'kind'), set: put('canopy', i, 'kind'), id: id('kind') }),
+    num(api, 'Crown', { get: at('canopy', i, 'crownMM'), set: put('canopy', i, 'crownMM'), unit: 'mm', step: 0.5, min: 2, placeholder: String(CANOPY_DEFAULTS.crownMM), id: id('crownMM') }),
+    num(api, 'Height', { get: at('canopy', i, 'heightMM'), set: put('canopy', i, 'heightMM'), unit: 'mm', step: 0.5, min: 1, placeholder: String(CANOPY_DEFAULTS.heightMM), id: id('heightMM') }),
+    num(api, 'Density', { get: at('canopy', i, 'density'), set: put('canopy', i, 'density'), step: 0.01, min: 0.01, max: 1, placeholder: '0.4', id: id('density'), title: 'The fraction of ground under canopy: 0.05 scattered, 0.55 a proper wood, 1 closed' }),
+    num(api, 'Lowest', { get: at('canopy', i, 'minZMM'), set: put('canopy', i, 'minZMM'), unit: 'mm', step: 1, placeholder: 'any', id: id('minZMM'), title: 'Height on the module, mm' }),
+    num(api, 'Treeline', { get: at('canopy', i, 'maxZMM'), set: put('canopy', i, 'maxZMM'), unit: 'mm', step: 1, placeholder: 'none', id: id('maxZMM'), title: 'Height on the module, mm' }),
+    num(api, 'Thinning', { get: at('canopy', i, 'thinningMM'), set: put('canopy', i, 'thinningMM'), unit: 'mm', step: 1, min: 0, placeholder: '0', id: id('thinningMM') }),
+    num(api, 'Max slope', { get: at('canopy', i, 'maxSlopeDeg'), set: put('canopy', i, 'maxSlopeDeg'), unit: '°', step: 1, min: 0, max: 90, placeholder: 'any', id: id('maxSlopeDeg') }),
   ];
 }
 
 function designNotes(api) {
-  const d = api.state.plan.design.filter((x) => x.severity === 'error' || x.severity === 'warning');
-  if (!d.length) return group('To build it', h('p', { class: 'hint' }, 'Nothing stands in the way of growing this map.'));
+  const d = (api.state.say?.notes || []).filter((x) => x.severity === 'error' || x.severity === 'warning');
+  if (!d.length) return group('To build it', h('p', { class: 'hint' }, 'Nothing stands in the way of growing this module.'));
   return group('To build it', d.map((x) => h('p', { class: x.severity === 'error' ? 'err-line' : 'warn-line' }, x.message)));
 }
 
-/* -------------------------------------------------------------------- tile */
-
-function tilePanel(api, sel) {
-  const st = api.state;
-  const s = st.spec;
-  const p = st.plan.placements.find((q) => q.col === sel.col && q.row === sel.row);
-  const t = st.plan.tiles.find((q) => q.col === sel.col && q.row === sel.row);
-  if (!p || !t) throw new Error('no such tile');
-  const k = ops.keyOf(sel.col, sel.row);
-  const c = st.plan.contract;
-  const explicit = Number.isFinite(s.levels?.[k]);
-  const ports = EDGES.filter((e) => p.tile.edges?.[e] && p.tile.edges[e].type !== 'land');
-  const firstIn = EDGES.find((e) => p.tile.edges?.[e]?.type === 'in');
-  const said = st.plan.sentences.filter((x) => x.tile === t.id || (x.seam && x.seam.startsWith(`${t.label}|`)) || x.text.startsWith(`${t.label} `) || x.text.startsWith(`${t.label}'s`));
-  const { cols, rows } = ops.dims(s);
-  const edges = [];
-  if (sel.col === 0 || sel.col === cols - 1) edges.push(['col', sel.col === 0 ? 'W' : 'E']);
-  if (sel.row === 0 || sel.row === rows - 1) edges.push(['row', sel.row === 0 ? 'S' : 'N']);
-
-  const water = !t.wet ? 'Dry: no water reaches it.'
-    : t.overtops ? `Fills to its rim at ${Math.round(t.rimMM)} mm and runs over its ${SIDE[t.overSide]} side.`
-      : t.ponds ? `Ponds to ${Math.round(t.levelMM)} mm; its rim holds at ${Math.round(t.rimMM)}.`
-        : 'Water runs through it.';
-
-  return [
-    h('h2', {}, t.label),
-    h('p', { class: 'sub' }, `Stands on ${t.riserMM} mm of plates${t.rot ? `, turned ${t.rot * 90}°` : ''}. ${ports.length ? `Fall ${t.fallMM} mm.` : 'No river.'}`),
-    h('p', { class: `say-one${t.overtops ? ' overtops' : t.ponds ? ' dam' : !t.wet ? ' dry' : ''}` }, water),
-    said.length ? h('ul', { class: 'said' }, said.slice(0, 5).map((x) => h('li', { class: x.kind }, x.text))) : null,
-    group('On the board',
-      h('div', { class: 'field' }, h('span', {}, 'Riser'), h('span', { class: 'ctl' },
-        h('button', { type: 'button', class: 'mini', 'aria-label': 'One plate lower', onclick: () => api.commit((x) => ops.setRiser(x, sel.col, sel.row, Math.max(0, p.level - 1)), `lower ${t.label}`) }, '−'),
-        h('b', { 'data-field': 'riser' }, `${p.level * c.plateMM} mm`),
-        h('button', { type: 'button', class: 'mini', 'aria-label': 'One plate higher', onclick: () => api.commit((x) => ops.setRiser(x, sel.col, sel.row, p.level + 1), `raise ${t.label}`) }, '+'),
-        h('button', { type: 'button', class: 'mini', disabled: !explicit, title: 'Let the river decide', onclick: () => api.commit((x) => ops.setLevel(x, sel.col, sel.row, null), `riser ${t.label} auto`) }, 'auto'))),
-      seg('Turn', [[0, '0°'], [1, '90'], [2, '180'], [3, '270']], t.rot, (v) => api.commit((x) => ops.setRot(x, sel.col, sel.row, v), `turn ${t.label}`)),
-      h('p', { class: 'hint' }, 'The riser is part of the design in a map-style spec: the corners and any dam reservoir are cut for it. A turn is only how the piece sits.'),
-    ),
-    group('Design',
-      seg('Fall', [...FALLS.map((f) => [f, String(f)]), ['', 'default']], Number.isFinite(s.falls?.[k]) ? s.falls[k] : '',
-        (v) => api.commit((x) => ops.setFall(x, sel.col, sel.row, v === '' ? null : v), `fall ${t.label}`), { wide: true }),
-      firstIn ? seg(`Waterfall in at ${firstIn}`, [[0, 'none'], ...[10, 20, 30, 40, 50].map((f) => [f, `+${f}`])], s.waterfalls?.[k] || 0,
-        (v) => api.commit((x) => ops.setWaterfall(x, sel.col, sel.row, v || null), `waterfall into ${t.label}`), { wide: true }) : null,
-      ports.length ? facts(ports.map((e) => {
-        const ed = p.tile.edges[e];
-        return [`${SIDE[e]}${t.rot ? ` (faces ${['N', 'E', 'S', 'W'][(EDGES.indexOf(e) + t.rot) % 4]})` : ''}`, `${ed.type} ${sizeFor(ed.size).id} @${portFloor(c, p.tile, ed.type)} mm${ed.drain ? ', drains' : ''}`];
-      })) : h('p', { class: 'hint' }, 'All four sides are land. Draw a river across it to give it ports.'),
-      facts([['Corners (sw se nw ne)', ['sw', 'se', 'nw', 'ne'].map((q) => Math.round(p.tile.corners[q])).join(' ')], ['Rim, on the table', `${Math.round(t.rimMM)} mm`]]),
-    ),
-    group('On this tile',
-      facts([
-        ['Lakes placed', String((s.lakes?.place || []).filter((x) => x.tile === t.label).length)],
-        ['Springs at a point', String((s.fountains?.place || []).filter((x) => x.tile === t.label && x.atMM).length)],
-        ['Woods drawn', String((s.canopy || []).filter((x) => (x.tiles || []).includes(t.label) && x.region).length)],
-      ]),
-      h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'primary', onclick: () => api.openTile(sel.col, sel.row) }, `Open ${t.label}`)),
-    ),
-    editsGroup(api, t.label),
-    edges.length ? group('Remove', h('div', { class: 'row-btns' }, edges.map(([kind, side]) => h('button', {
-      type: 'button', class: 'danger',
-      onclick: () => { api.commit((x) => ops.shrinkBoard(x, side), `remove a ${kind === 'col' ? 'column' : 'row'}`); api.select(null); },
-    }, kind === 'col' ? `Remove column ${t.label.replace(/\d+$/, '')}` : `Remove row ${sel.row + 1}`))),
-    h('p', { class: 'hint' }, 'A map-style board is a rectangle, so a tile goes with its row or column. Rivers through it are cut.')) : null,
-  ];
-}
-
 /**
- * The strokes made on a tile in Refine, oldest first, each one removable.
- * They are replayed in this order every time the tile is grown.
+ * The strokes made in Refine, oldest first, each one removable. They are
+ * replayed in this order every time the module is grown.
  */
-function editsGroup(api, label) {
-  const list = (api.state.spec.edits?.[label] || []).filter((e) => e && typeof e === 'object');
+function editsGroup(api) {
+  const list = (api.state.spec.edits || []).filter((e) => e && typeof e === 'object');
   if (!list.length) return null;
   return group(`Edits by hand (${list.length})`,
     h('ol', { class: 'edit-list' }, list.map((e, i) => h('li', {},
       h('span', {}, ops.describeEdit(e)),
-      h('button', {
-        type: 'button', class: 'mini', title: 'Take this edit off', 'aria-label': `Remove edit ${i + 1}`, 'data-edit': String(i),
-        onclick: () => api.commit((x) => ops.removeEdit(x, label, i), `remove an edit on ${label}`),
-      }, '×')))),
-    h('div', { class: 'row-btns' }, h('button', {
-      type: 'button', class: 'danger', onclick: () => api.commit((x) => ops.clearEdits(x, label), `clear the edits on ${label}`),
-    }, 'Clear all')),
+      h('button', { type: 'button', class: 'mini', title: 'Take this edit off', 'aria-label': `Remove edit ${i + 1}`, 'data-edit': String(i), onclick: () => api.commit((x) => ops.removeEdit(x, i), 'remove an edit') }, '×')))),
+    h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'danger', onclick: () => api.commit((x) => ops.clearEdits(x), 'clear the edits') }, 'Clear all')),
     h('p', { class: 'hint' }, 'Replayed in this order onto the ground every time it grows, so a new seed keeps them. None of them reaches the last 12 mm of the rim.'));
 }
 
-/* ------------------------------------------------------------------- river */
+/* --------------------------------------------------------------- channel */
 
-function riverPanel(api, sel) {
+function channelPanel(api, sel) {
   const s = api.state.spec;
-  const r = s.rivers?.[sel.index];
-  if (!r) throw new Error('no such river');
+  const ch = s.channels?.[sel.index];
+  if (!ch) throw new Error('no such channel');
   const i = sel.index;
-  const path = (r.path || []).map(([c, w]) => ops.labelOf(c, w));
-  const set = (k) => (x, v) => { const rr = x.rivers[i]; if (v === undefined) delete rr[k]; else rr[k] = v; x.rivers[i] = ops.orderRiver(rr); };
+  const c = ops.contractOf(s);
+  const ends = ops.channelEnds(s, ch);
+  const grown = api.state.grown?.report?.channels?.find((x) => x.name === (ch.name || `channel ${i + 1}`));
+  const where = !ends ? 'It is too short to cut, or leaves by the side it came in.'
+    : `${ends.from ? `In at the ${SIDE[ends.from]} port` : 'Starts inside the module'}, ${ends.to ? `out at the ${SIDE[ends.to]} port` : 'ends inside the module'}${ends.routed ? ', routed down the valley when it grows' : ''}.`;
   return [
-    h('h2', {}, r.name || `River ${i + 1}`),
-    h('p', { class: 'sub' }, `${r.sourceEdge ? `In from the ${SIDE[r.sourceEdge]}, ` : ''}${path.join(' → ')}${r.sinkEdge ? `, out to the ${SIDE[r.sinkEdge]}` : ''}.`),
-    group('River',
-      text(api, 'Name', { get: () => r.name, set: set('name'), id: 'river.name' }),
-      choose(api, 'Starts as', { options: [['', 'auto (river)'], ...SIZE_IDS.map((x) => [x, `${x}, ${SIZES[x].widthMM} mm`])], get: () => r.size, set: set('size'), id: 'river.size' }),
-      choose(api, 'Comes in from', { options: [['', 'rises on the tile'], ...EDGES.map((e) => [e, SIDE[e]])], get: () => r.sourceEdge, set: set('sourceEdge'), id: 'river.sourceEdge' }),
-      choose(api, 'Drains to', { options: [['', 'ends on the tile'], ...EDGES.map((e) => [e, SIDE[e]])], get: () => r.sinkEdge, set: set('sinkEdge'), id: 'river.sinkEdge' }),
-      r.sinkEdge ? choose(api, 'Mouth', { options: [['', 'auto, from the flow'], ...SIZE_IDS.map((x) => [x, `${x}, ${SIZES[x].widthMM} mm`])], get: () => r.sinkSize, set: set('sinkSize'), id: 'river.sinkSize' }) : null,
-      h('p', { class: 'hint' }, 'The line says which tiles and which sides. When it grows, the channel is routed down the valley the ground has, so it will not follow the line exactly.'),
+    h('h2', {}, ch.name || `Channel ${i + 1}`),
+    h('p', { class: 'sub' }, where),
+    group('Channel',
+      text(api, 'Name', { get: () => ch.name, set: put('channels', i, 'name'), id: 'channel.name' }),
+      seg('Width', WIDTHS.map((w) => [w, `${w}`]), ch.widthMM ?? CHANNEL_DEFAULTS.widthMM, (v) => api.commit((x) => { x.channels[i].widthMM = v; }, 'channel width'), { wide: true, id: 'channel.width' }),
+      num(api, 'Width', { get: at('channels', i, 'widthMM'), set: put('channels', i, 'widthMM'), unit: 'mm', step: 1, min: 4, placeholder: String(CHANNEL_DEFAULTS.widthMM), id: 'channel.widthMM', title: 'Bank to bank. At the rim it is the port\'s width whatever this says.' }),
+      num(api, 'Depth', { get: at('channels', i, 'depthMM'), set: put('channels', i, 'depthMM'), unit: 'mm', step: 0.5, min: 0.5, placeholder: String(s.channelDefaults?.depthMM ?? c.channelDepthMM), id: 'channel.depthMM', title: 'Below the ground along its line. The cross-section is a circular arc, a ) on its side; deeper than half the width it gets straight walls.' }),
+      Array.isArray(ch.path) ? h('p', { class: 'hint' }, `${ch.path.length} points. Drag a point to move it, or the line to move the whole channel.`)
+        : [h('p', { class: 'hint' }, 'No line of its own: the generator routes it down the valley the ice left, between its two ends.'),
+          grown?.pts ? h('div', { class: 'row-btns' }, h('button', { type: 'button', 'data-field': 'channel.take', onclick: () => api.commit((x) => ops.takeLine(x, i, grown.pts), 'take the channel\'s line') }, 'Take the line it found'),
+            h('span', { class: 'hint' }, 'so you can drag its points')) : null],
     ),
-    h('div', { class: 'row-btns' }, del('Delete river', () => { api.commit((x) => ops.removeRiver(x, i), 'delete a river'); api.select(null); })),
+    grown ? group('As grown', facts([
+      ['Length', `${Math.round(grown.lengthMM)} mm`],
+      ['Floor at the start', `${grown.startFloorMM.toFixed(1)} mm`],
+      ['Floor at the end', `${grown.endFloorMM.toFixed(1)} mm`],
+      ['Lowest', `${grown.lowestFloorMM.toFixed(1)} mm`],
+      grown.climbMM > 0.5 ? ['Climbs', `${grown.climbMM.toFixed(1)} mm`] : null,
+    ]), grown.climbMM > 0.5 ? h('p', { class: 'warn-line' }, 'The line runs over a rise, so water put in at the start ponds before it. Move the line, or dig it with the Lower brush.') : null) : null,
+    h('div', { class: 'row-btns' }, del('Delete channel', () => { api.commit((x) => ops.removeChannel(x, i), 'delete a channel'); api.select(null); })),
   ];
-}
-
-/* -------------------------------------------------------------------- seam */
-
-function seamPanel(api, sel) {
-  const st = api.state;
-  const sm = st.plan.seams.find((x) => x.id === sel.id);
-  if (!sm) throw new Error('no such seam');
-  const said = st.plan.sentences.filter((x) => x.seam === sm.id);
-  const KIND = {
-    flow: 'The river runs across', waterfall: 'Waterfall', dam: 'Dam', blocked: 'Into a bank', spills: 'Spills onto land',
-    'head-on': 'Head on', drains: 'Drains into the tray', spring: 'Spring', dry: 'Dry', cliff: 'Cliff', plane: 'Level ground',
-  };
-  const rows = [
-    sm.dropMM ? ['Drop', `${Math.round(sm.dropMM)} mm`] : null,
-    Number.isFinite(sm.pondToMM) ? ['Ponds to', `${Math.round(sm.pondToMM)} mm`] : null,
-    Number.isFinite(sm.wouldPondToMM) ? ['Would need', `${Math.round(sm.wouldPondToMM)} mm`] : null,
-    sm.widths?.length === 2 ? ['Widths', `${sm.widths[0]} → ${sm.widths[1]} mm${sm.spreads ? ', spreads' : ''}`] : sm.widths ? ['Width', `${sm.widths[0]} mm`] : null,
-    Number.isFinite(sm.landStepMM) ? ['Land step', `${Math.round(Math.abs(sm.landStepMM))} mm`] : null,
-    ['Water crosses', sm.wet ? 'yes' : 'no'],
-  ];
-  const kids = [
-    h('h2', {}, sm.tiles.join(' | ')),
-    h('p', { class: 'sub' }, `${KIND[sm.kind] || sm.kind}${sm.holds === false ? ', and it overtops' : ''}.`),
-    said.length ? said.map((x) => h('p', { class: `say-one ${x.kind}` }, x.text)) : h('p', { class: `say-one ${sm.kind}` }, describeQuiet(sm)),
-    facts(rows),
-  ];
-  // A waterfall can be declared on the downstream tile's first inlet, which is what the spec can say.
-  if (['flow', 'waterfall', 'dam'].includes(sm.kind) && sm.to) {
-    const down = st.plan.tiles.find((t) => t.label === sm.to);
-    const place = st.plan.placements.find((p) => p.id === down?.id);
-    const placedSide = down && (sm.a === down.id ? sm.edge : ['S', 'W', 'N', 'E'][['N', 'E', 'S', 'W'].indexOf(sm.edge)]);
-    const designSide = down ? facingEdge(placedSide, down.rot) : null;
-    const firstIn = place && EDGES.find((e) => place.tile.edges?.[e]?.type === 'in');
-    if (down && designSide === firstIn) {
-      const k = ops.keyOf(down.col, down.row);
-      kids.push(group('Waterfall',
-        seg(`Extra drop into ${down.label}`, [[0, 'none'], ...[10, 20, 30, 40, 50].map((f) => [f, `+${f}`])], st.spec.waterfalls?.[k] || 0,
-          (v) => api.commit((x) => ops.setWaterfall(x, down.col, down.row, v || null), `waterfall into ${down.label}`), { wide: true }),
-        h('p', { class: 'hint' }, `${down.label} stands that much further below, and the river free-falls the difference. A waterfall at a seam is also the best answer to leaking: airborne water cannot find the gap.`)));
-    }
-  }
-  if (sm.kind === 'spring' || (sm.kind === 'dry' && !sm.b)) {
-    const t = st.plan.tiles.find((x) => x.label === sm.to);
-    if (t) kids.push(h('div', { class: 'row-btns' }, h('button', { type: 'button', onclick: () => api.commit((x) => ops.toggleSpring(x, t.label, facingEdge(sm.edge, t.rot)), 'spring') }, sm.kind === 'spring' ? 'Take the spring off' : 'Put a spring here')));
-  }
-  if (sm.kind === 'drains') {
-    const t = st.plan.tiles.find((x) => x.label === sm.from);
-    if (t) kids.push(h('div', { class: 'row-btns' }, h('button', { type: 'button', onclick: () => api.commit((x) => ops.toggleDrain(x, t.label, facingEdge(sm.edge, t.rot)), 'stop draining') }, 'Stop draining here')));
-  }
-  return kids;
-}
-
-function describeQuiet(sm) {
-  if (sm.kind === 'cliff') return `The land steps ${Math.round(Math.abs(sm.landStepMM))} mm along this seam.`;
-  if (sm.kind === 'plane') return 'Level ground runs straight across.';
-  if (!sm.wet && ['flow', 'waterfall', 'dam', 'blocked', 'spills', 'drains'].includes(sm.kind)) return 'A river bed with no water in it: nothing upstream feeds it.';
-  return 'Nothing crosses here.';
 }
 
 /* ---------------------------------------------------------------- ground */
@@ -406,17 +294,15 @@ function describeQuiet(sm) {
 function spinePanel(api) {
   const s = api.state.spec;
   if (!s.spine) throw new Error('no spine');
-  // The board's longest side in mm, which is what the size placeholders
-  // are a fraction of. cols/rows/T belong to mapPanel, not here.
-  const boardSpanMM = Math.max(s.cols || 3, s.rows || 3) * (s.contract?.tileMM ?? 200);
+  const { T } = ops.dims(s);
   return [
     h('h2', {}, 'The ridge'),
-    h('p', { class: 'sub' }, `${s.spine.length} points across the map. Drag a point to move it.`),
+    h('p', { class: 'sub' }, `${s.spine.length} points. Drag a point to move it; it may run out into the margin.`),
     group('Range',
       num(api, 'Peak height', { get: (x) => x.spineHeightMM, set: (x, v) => { if (v === undefined) delete x.spineHeightMM; else x.spineHeightMM = v; }, unit: 'mm', step: 1, min: 0, placeholder: '60' }),
-      num(api, 'Half-width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.22)) }),
+      num(api, 'Half-width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.45)) }),
     ),
-    group('Points', facts(s.spine.map((p, i) => { const b = ops.toBoard(s, p); return [`${i + 1}`, `${Math.round(b.x)}, ${Math.round(b.y)} mm`]; }))),
+    group('Points', facts(s.spine.map((p, i) => [`${i + 1}`, `${Math.round(p[0])}, ${Math.round(p[1])} mm`]))),
     h('div', { class: 'row-btns' }, del('Delete the ridge', () => { api.commit((x) => { delete x.spine; }, 'delete the ridge'); api.select(null); })),
   ];
 }
@@ -425,22 +311,17 @@ function volcanoPanel(api, sel) {
   const s = api.state.spec;
   const v = s.volcanoes?.[sel.index];
   if (!v) throw new Error('no volcano');
-  // The board's longest side in mm, which is what the size placeholders
-  // are a fraction of. cols/rows/T belong to mapPanel, not here.
-  const boardSpanMM = Math.max(s.cols || 3, s.rows || 3) * (s.contract?.tileMM ?? 200);
+  const { T } = ops.dims(s);
   const i = sel.index;
-  const at = (k) => (x) => x.volcanoes[i][k];
-  const put = (k) => (x, val) => { if (val === undefined) delete x.volcanoes[i][k]; else x.volcanoes[i][k] = val; };
-  const b = ops.toBoard(s, v.at);
   return [
     h('h2', {}, 'Volcano'),
-    h('p', { class: 'sub' }, `At ${Math.round(b.x)}, ${Math.round(b.y)} mm on the board.`),
+    h('p', { class: 'sub' }, `At ${Math.round(v.at[0])}, ${Math.round(v.at[1])} mm.`),
     group('Cone',
-      num(api, 'Height', { get: at('heightMM'), set: put('heightMM'), unit: 'mm', step: 1, min: 0, placeholder: '32', id: 'v.heightMM' }),
-      num(api, 'Base radius', { get: at('baseRadiusMM'), set: put('baseRadiusMM'), unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.18)), id: 'v.baseRadiusMM' }),
-      num(api, 'Crater radius', { get: at('craterRadiusMM'), set: put('craterRadiusMM'), unit: 'mm', step: 1, min: 0, placeholder: '16', id: 'v.craterRadiusMM' }),
-      num(api, 'Crater depth', { get: at('craterDepthMM'), set: put('craterDepthMM'), unit: 'mm', step: 1, min: 0, placeholder: '7', id: 'v.craterDepthMM' }),
-      num(api, 'Breached toward', { get: at('breachAzimuthDeg'), set: put('breachAzimuthDeg'), unit: '°', step: 5, min: 0, max: 359, placeholder: 'none', id: 'v.breach', title: '0 is east, 90 north, as the generator measures it' }),
+      num(api, 'Height', { get: at('volcanoes', i, 'heightMM'), set: put('volcanoes', i, 'heightMM'), unit: 'mm', step: 1, min: 0, placeholder: '32', id: 'v.heightMM' }),
+      num(api, 'Base radius', { get: at('volcanoes', i, 'baseRadiusMM'), set: put('volcanoes', i, 'baseRadiusMM'), unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.36)), id: 'v.baseRadiusMM' }),
+      num(api, 'Crater radius', { get: at('volcanoes', i, 'craterRadiusMM'), set: put('volcanoes', i, 'craterRadiusMM'), unit: 'mm', step: 1, min: 0, placeholder: '16', id: 'v.craterRadiusMM' }),
+      num(api, 'Crater depth', { get: at('volcanoes', i, 'craterDepthMM'), set: put('volcanoes', i, 'craterDepthMM'), unit: 'mm', step: 1, min: 0, placeholder: '7', id: 'v.craterDepthMM' }),
+      num(api, 'Breached toward', { get: at('volcanoes', i, 'breachAzimuthDeg'), set: put('volcanoes', i, 'breachAzimuthDeg'), unit: '°', step: 5, min: 0, max: 359, placeholder: 'none', id: 'v.breach', title: '0 is east, 90 north, as the generator measures it' }),
       h('p', { class: 'hint' }, 'A breached wall is what most real cones have. 0 is east and 90 north.'),
     ),
     h('div', { class: 'row-btns' }, del('Delete volcano', () => { api.commit((x) => { x.volcanoes.splice(i, 1); ops.tidy(x); }, 'delete a volcano'); api.select(null); })),
@@ -451,39 +332,37 @@ function flatPanel(api, sel) {
   const s = api.state.spec;
   const f = s.flats?.[sel.index];
   if (!f) throw new Error('no flat');
-  // The board's longest side in mm, which is what the size placeholders
-  // are a fraction of. cols/rows/T belong to mapPanel, not here.
-  const boardSpanMM = Math.max(s.cols || 3, s.rows || 3) * (s.contract?.tileMM ?? 200);
+  const { T } = ops.dims(s);
   const i = sel.index;
-  const at = (k) => (x) => x.flats[i][k];
-  const put = (k) => (x, val) => { if (val === undefined) delete x.flats[i][k]; else x.flats[i][k] = val; };
   return [
     h('h2', {}, 'Flat'),
-    h('p', { class: 'sub' }, 'Ground the map keeps level.'),
+    h('p', { class: 'sub' }, 'Ground the module keeps level.'),
     group('Flat',
-      num(api, 'Radius', { get: at('radiusMM'), set: put('radiusMM'), unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.1)), id: 'f.radiusMM' }),
-      num(api, 'Level at', { get: at('elevMM'), set: put('elevMM'), unit: 'mm', step: 1, placeholder: 'the ground there', id: 'f.elevMM' }),
+      num(api, 'Radius', { get: at('flats', i, 'radiusMM'), set: put('flats', i, 'radiusMM'), unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.2)), id: 'f.radiusMM' }),
+      num(api, 'Level at', { get: at('flats', i, 'elevMM'), set: put('flats', i, 'elevMM'), unit: 'mm', step: 1, placeholder: 'the ground there', id: 'f.elevMM' }),
     ),
     h('div', { class: 'row-btns' }, del('Delete flat', () => { api.commit((x) => { x.flats.splice(i, 1); ops.tidy(x); }, 'delete a flat'); api.select(null); })),
   ];
 }
 
-/* ------------------------------------------------------------------ tile */
+/* ----------------------------------------------------------------- on it */
 
 function lakePanel(api, sel) {
   const s = api.state.spec;
   const l = s.lakes?.place?.[sel.index];
   if (!l) throw new Error('no lake');
   const i = sel.index;
-  const at = (k) => (x) => x.lakes.place[i][k];
-  const put = (k) => (x, val) => { if (val === undefined) delete x.lakes.place[i][k]; else x.lakes.place[i][k] = val; };
+  const where = Array.isArray(l.pathMM) ? `Painted along a stroke of ${l.pathMM.length} points, ${l.radiusMM * 2} mm wide; its surface sits at the lowest ground under it.`
+    : `At ${l.atMM.join(', ')} mm. It fills whatever ground is low round that point.`;
+  const g = (k) => (x) => x.lakes.place[i][k];
+  const p = (k) => (x, val) => { if (val === undefined) delete x.lakes.place[i][k]; else x.lakes.place[i][k] = val; };
   return [
-    h('h2', {}, `Lake on ${l.tile}`),
-    h('p', { class: 'sub' }, `At ${l.atMM.join(', ')} mm in the tile. It fills whatever ground is low round that point.`),
+    h('h2', {}, 'Lake'),
+    h('p', { class: 'sub' }, where),
     group('Lake',
-      num(api, 'Depth', { get: at('depthMM'), set: put('depthMM'), unit: 'mm', step: 0.5, min: 0.5, placeholder: String(s.lakes?.depthMM ?? LAKE_DEFAULTS.depthMM), id: 'l.depthMM' }),
-      num(api, 'Radius', { get: at('radiusMM'), set: put('radiusMM'), unit: 'mm', step: 1, min: 4, placeholder: 'flood', id: 'l.radiusMM', title: 'Set it to dig a round lake out whatever the ground does; leave it empty to flood the low ground' }),
-      choose(api, 'Bed', { options: [['', 'as the map'], ...PROFILES.map((x) => [x, x])], get: at('profile'), set: put('profile'), id: 'l.profile' }),
+      num(api, 'Depth', { get: g('depthMM'), set: p('depthMM'), unit: 'mm', step: 0.5, min: 0.5, placeholder: String(s.lakes?.depthMM ?? LAKE_DEFAULTS.depthMM), id: 'l.depthMM' }),
+      num(api, 'Radius', { get: g('radiusMM'), set: p('radiusMM'), unit: 'mm', step: 1, min: 4, placeholder: 'flood', id: 'l.radiusMM', title: 'Set it to dig a round lake out whatever the ground does; leave it empty to flood the low ground' }),
+      choose(api, 'Bed', { options: [['', 'as the module'], ...PROFILES.map((x) => [x, x])], get: g('profile'), set: p('profile'), id: 'l.profile' }),
     ),
     h('div', { class: 'row-btns' }, del('Delete lake', () => { api.commit((x) => { x.lakes.place.splice(i, 1); ops.tidy(x); }, 'delete a lake'); api.select(null); })),
   ];
@@ -495,9 +374,9 @@ function springPanel(api, sel) {
   if (!sp) throw new Error('no spring');
   const i = sel.index;
   return [
-    h('h2', {}, `Spring on ${sp.tile}`),
-    h('p', { class: 'sub' }, sp.atMM ? `At ${sp.atMM.join(', ')} mm in the tile.` : `On its ${sp.edge} inlet.`),
-    h('p', { class: 'hint' }, `A ${s.fountains?.tubeOdMM ?? FOUNTAIN_DEFAULTS.tubeOdMM} mm tube comes up through every plate under it into a pool with one notch, so the water leaves at the rate it arrives instead of squirting.`),
+    h('h2', {}, 'Spring'),
+    h('p', { class: 'sub' }, `At ${sp.atMM.join(', ')} mm.`),
+    h('p', { class: 'hint' }, `A ${s.fountains?.tubeOdMM ?? FOUNTAIN_DEFAULTS.tubeOdMM} mm tube comes up through the module into a pool with one notch, so the water leaves at the rate it arrives instead of squirting.`),
     h('div', { class: 'row-btns' }, del('Delete spring', () => { api.commit((x) => { x.fountains.place.splice(i, 1); ops.tidy(x); }, 'delete a spring'); api.select(null); })),
   ];
 }
@@ -507,28 +386,11 @@ function woodPanel(api, sel) {
   const w = s.canopy?.[sel.index];
   if (!w) throw new Error('no wood');
   return [
-    h('h2', {}, `${w.kind === 'conifer' ? 'Conifers' : 'Broadleaf'}${w.tiles ? ` on ${w.tiles.join(', ')}` : ''}`),
-    h('p', { class: 'sub' }, w.region ? `Drawn as a shape of ${w.region.length} points. Drag a point to reshape it.` : 'Over the whole map.'),
+    h('h2', {}, w.kind === 'conifer' ? 'Conifers' : 'Broadleaf'),
+    h('p', { class: 'sub' }, w.region ? `Drawn as a shape of ${w.region.length} points. Drag a point to reshape it.` : 'Over the whole module.'),
     group('Wood', woodFields(api, sel.index)),
     h('div', { class: 'row-btns' }, del('Delete wood', () => { api.commit((x) => { x.canopy.splice(sel.index, 1); ops.tidy(x); }, 'delete a wood'); api.select(null); })),
   ];
 }
 
-function cornerPanel(api, sel) {
-  const st = api.state;
-  const key = `${sel.cc},${sel.rr}`;
-  const lift = st.spec.cornerRaise?.[key] || 0;
-  const plate = st.plan.contract.plateMM;
-  const world = st.plan.corners.get(key);
-  const touching = [[0, 0], [-1, 0], [0, -1], [-1, -1]]
-    .map(([dc, dr]) => st.plan.placements.find((p) => p.col === sel.cc + dc && p.row === sel.rr + dr))
-    .filter(Boolean).map((p) => p.label);
-  return [
-    h('h2', {}, 'Corner'),
-    h('p', { class: 'sub' }, `Shared by ${touching.join(', ')}. Every tile here reads one height for it, so they mate whatever it is.`),
-    facts([['On the table', `${Math.round(world ?? 0)} mm`], ['Raised by', `${lift} mm`]]),
-    seg('Raise', [[0, '0'], [plate, `+${plate}`], [2 * plate, `+${2 * plate}`], [3 * plate, `+${3 * plate}`]], lift,
-      (v) => api.commit((x) => { if (!v) { if (x.cornerRaise) delete x.cornerRaise[key]; ops.tidy(x); } else { x.cornerRaise = x.cornerRaise || {}; x.cornerRaise[key] = v; } }, 'raise a corner'), { wide: true }),
-    h('p', { class: 'hint' }, 'A higher corner is a higher rim: it is how a tile behind a dam is made to hold its pond instead of running over.'),
-  ];
-}
+export { EDGES };

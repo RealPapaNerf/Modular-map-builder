@@ -1,25 +1,25 @@
 // worker.js — the build, off the main thread.
 //
-// buildMap is a long synchronous job (seconds to tens of seconds) and it
-// returns tens of megabytes of mesh. Both facts argue for the same thing: run
-// it here, keep the result here, and send the main thread only what it draws.
-// STLs are generated on demand and transferred, so the meshes are never
-// copied across unless somebody actually asks for a file.
+// buildTile is a long synchronous job (seconds to tens of seconds) and it
+// returns megabytes of mesh. Both facts argue for the same thing: run it
+// here, keep the result here, and send the main thread only what it draws.
+// STLs are generated on demand and transferred, so the mesh is never copied
+// across unless somebody actually asks for a file.
 //
-// The editor runs two of these. One builds. The other answers `world`: the
-// ground without its ice, a tenth of a second, so the board can read real
-// rims before anything has been grown -- the corner lattice is quantised to
-// the plate, so the ice rarely moves a corner, and the grown bed replaces
-// the estimate as soon as there is one.
+// The editor runs two of these. One builds. The other answers `estimate`:
+// the module cut from the ground WITHOUT its ice, hillshaded, in a fraction
+// of a second, so the canvas shows the ridge taking shape while it is drawn.
 //
-// After every build the builder also sends `heights`: each tile's ground,
-// standing water and cell kinds as typed arrays, TRANSFERRED rather than
-// copied, which is all the 3D view needs. The meshes stay here.
+// After every build the builder also sends `heights`: the module's ground,
+// its water and its cell kinds as typed arrays, TRANSFERRED rather than
+// copied, which is all the 3D view needs. The mesh stays here.
 
-import { buildMap, buildWorld } from '../lib/build.js';
-import { worldKey } from '../lib/board.js';
-import { shadeMap } from '../lib/shade.js';
-import { writeSTL, plateSTL } from '../lib/stl.js';
+import { buildTile, buildWorld, worldKey } from '../lib/build.js';
+import { makeContract } from '../lib/contract.js';
+import { cutTile } from '../lib/tile.js';
+import { scaleOf, marginOf } from '../lib/scale.js';
+import { shadeTile } from '../lib/shade.js';
+import { writeSTL } from '../lib/stl.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
 import { meshTile } from '../lib/mesh.js';
 import { makeField } from '../lib/field.js';
@@ -32,93 +32,38 @@ let result = null;
 let spec = null;
 // The last world grown, and the key it was grown for. The ground is a pure
 // function of worldKey(spec, { ice: true }), so a rebuild that changed
-// nothing in it -- a brushstroke, a river, a fall -- reuses it and skips the
-// ice, which is most of a draft build.
+// nothing in it -- a brushstroke, a channel -- reuses it and skips the ice,
+// which is most of a build.
 let kept = null;
 
 const post = (msg, transfer = []) => self.postMessage(msg, transfer);
-const mapName = () => (spec && spec.name) || 'map';
+const moduleName = () => (spec && spec.name) || 'module';
 
 /** The file set `mmb build` writes, as generators so nothing is built early. */
 function manifest() {
   if (!result) return [];
-  const c = result.contract;
+  const t = result.tile;
   const out = [];
-
-  for (const t of result.tiles) {
-    out.push({
-      id: `tile:${t.label}`,
-      name: `${mapName()}-${t.label}.stl`,
-      group: 'tiles',
-      note: `${t.mesh.triangles.toLocaleString()} triangles`,
-      make: () => writeSTL(t.tris, `${mapName()} ${t.label}`),
-    });
-  }
-
   out.push({
-    id: 'plate',
-    name: 'plate.stl',
-    group: 'plates',
-    note: `${c.tileMM} x ${c.tileMM} x ${c.plateMM} mm, print ${result.tiles.reduce((a, t) => a + t.stack.plates, 0)}`,
-    make: () => writeSTL(plateSTL(c.tileMM, c.tileMM, c.plateMM), 'plate'),
+    id: 'module', name: `${moduleName()}.stl`, group: 'module',
+    note: `${t.mesh.triangles.toLocaleString()} triangles`,
+    make: () => writeSTL(t.tris, moduleName()),
   });
-
-  // A plate with a tube through it is not the same part as one without.
-  for (const t of result.tiles) {
-    if (!(t.springs || []).length || t.stack.plates === 0) continue;
-    out.push({
-      id: `plate-drilled:${t.label}`,
-      name: `plate-drilled-${t.label}.stl`,
-      group: 'plates',
-      note: `${t.stack.plates} needed under ${t.label}`,
-      make: () => {
-        const stepMM = 1.5;
-        const n = Math.round(c.tileMM / stepMM) + 1;
-        const flat = makeField(n, n, c.tileMM / (n - 1));
-        flat.values.fill(c.plateMM);
-        return writeSTL(meshTile(flat, { bores: t.springs.map((sp) => sp.bore) }), `plate ${t.label}`);
-      },
-    });
-  }
-
   const usable = usableKeys(result).length;
   if (usable) {
-    out.push({
-      id: 'keys',
-      name: 'keys.stl',
-      group: 'joinery',
-      note: `${usable} key${usable > 1 ? 's' : ''} laid out on one sheet`,
-      make: () => writeSTL(keySheet(usable, result.joint), 'seam keys'),
-    });
-    out.push({
-      id: 'key-one',
-      name: 'key-one.stl',
-      group: 'joinery',
-      note: 'a single key, for test-fitting',
-      make: () => writeSTL(keySolid(result.joint), 'seam key'),
-    });
+    out.push({ id: 'keys', name: 'keys.stl', group: 'joinery', note: `${usable} key${usable > 1 ? 's' : ''} on one sheet, one per recess`, make: () => writeSTL(keySheet(usable, result.joint), 'seam keys') });
+    out.push({ id: 'key-one', name: 'key-one.stl', group: 'joinery', note: 'a single key, for test-fitting', make: () => writeSTL(keySolid(result.joint), 'seam key') });
   }
-
-  if (result.tiles.some((t) => (t.springs || []).length)) {
+  if (t.springs.length) {
     out.push({
-      id: 'tray',
-      name: 'tray.stl',
-      group: 'joinery',
-      note: 'will need splitting for your bed',
+      id: 'tray', name: 'tray.stl', group: 'joinery', note: 'the tub the module stands in, with the pump under it',
       make: () => {
-        let maxCol = 0;
-        let maxRow = 0;
-        for (const t of result.tiles) { maxCol = Math.max(maxCol, t.spec.col); maxRow = Math.max(maxRow, t.spec.row); }
-        const tray = trayField(makeField, {
-          widthMM: (maxCol + 1) * c.tileMM,
-          depthMM: (maxRow + 1) * c.tileMM,
-          ...(spec.tray || {}),
-        });
+        const c = result.contract;
+        const tray = trayField(makeField, { widthMM: c.tileMM, depthMM: c.tileMM, ...(spec.tray || {}) });
         return writeSTL(meshTile(tray.field), 'tray');
       },
     });
   }
-
   return out;
 }
 
@@ -128,59 +73,42 @@ function find(id) {
   return f;
 }
 
-const fieldMsg = (f) => {
-  const values = new Float64Array(f.values);
-  return { nx: f.nx, ny: f.ny, step: f.step, originX: f.originX, originY: f.originY, values };
-};
-
 self.onmessage = async (ev) => {
   const msg = ev.data;
   try {
-    if (msg.type === 'world') {
-      const w = buildWorld({ ...msg.spec, glacier: false });
-      const field = fieldMsg(w.bed);
-      post({ type: 'world', key: msg.key ?? worldKey(msg.spec), field }, [field.values.buffer]);
+    if (msg.type === 'estimate') {
+      // The ground without its ice, cut and shaded: a draft of what the
+      // ridge and the volcanoes do, before anything is grown.
+      const s = { ...msg.spec, glacier: false };
+      const c = makeContract(s.contract || {});
+      const w = buildWorld(s);
+      const local = cutTile(w.bed, c, { marginMM: marginOf(s, c.tileMM), metresPerMM: scaleOf(s), meshMM: 2.5 });
+      const { rgb, width, height } = shadeTile({ local }, { px: msg.px || 256 });
+      post({ type: 'estimate', key: msg.key ?? worldKey(msg.spec), preview: { rgb, width, height } }, [rgb.buffer]);
       return;
     }
 
     if (msg.type === 'run') {
       spec = msg.spec;
       const t0 = Date.now();
-      // `check` is about the contract, not the rock — same as the CLI.
       const runSpec = msg.mode === 'check' ? { ...spec, glacier: false } : spec;
       result = null;
       const key = worldKey(runSpec, { ice: true });
-      result = buildMap(runSpec, (m) => post({ type: 'progress', message: m }), { world: kept?.key === key ? kept.world : null });
+      result = buildTile(runSpec, (m) => post({ type: 'progress', message: m }), { world: kept?.key === key ? kept.world : null });
       kept = { key, world: result.world };
-      result.name = mapName();
+      result.name = moduleName();
 
       post({ type: 'progress', message: 'Shading' });
-      const { rgb, width, height } = shadeMap(result, { pxPerTile: msg.pxPerTile || 170 });
+      const { rgb, width, height } = shadeTile(result.tile, { px: msg.px || 512 });
       const report = summarise(result, { mode: msg.mode, spec: runSpec });
       const files = manifest().map(({ id, name, group, note }) => ({ id, name, group, note }));
-
-      // The bed the tiles were cut from, so the board reads the rims they got.
-      const world = fieldMsg(result.world.bed);
       post({
-        type: 'report',
-        report,
-        files,
-        elapsedMS: Date.now() - t0,
-        preview: { rgb, width, height, pxPerTile: msg.pxPerTile || 170 },
-        world,
-        worldKey: worldKey(runSpec, { ice: true }),
-        id: msg.id ?? null,
-      }, [rgb.buffer, world.values.buffer]);
+        type: 'report', report, files, elapsedMS: Date.now() - t0,
+        preview: { rgb, width, height }, worldKey: key, id: msg.id ?? null,
+      }, [rgb.buffer]);
 
-      // The ground for the 3D view: one Float32Array of heights per tile,
-      // plus its water and what each cell is, handed over without a copy.
-      const tiles = result.tiles.map(tileHeights);
-      post({
-        type: 'heights',
-        id: msg.id ?? null,
-        contract: { tileMM: result.contract.tileMM, plateMM: result.contract.plateMM },
-        tiles,
-      }, tiles.flatMap(transferables));
+      const tile = tileHeights(result.tile);
+      post({ type: 'heights', id: msg.id ?? null, contract: { tileMM: result.contract.tileMM, rimLockMM: result.contract.rimLockMM }, tile }, transferables(tile));
       return;
     }
 
@@ -198,10 +126,8 @@ self.onmessage = async (ev) => {
         post({ type: 'progress', message: `Packing ${all[i].name} (${i + 1}/${all.length})` });
         files.push({ name: all[i].name, bytes: all[i].make() });
       }
-      const blob = await makeZip(files, {
-        onProgress: (n, total, name) => post({ type: 'progress', message: `Compressing ${name} (${n}/${total})` }),
-      });
-      post({ type: 'zip', blob, name: `${mapName()}-tiles.zip` });
+      const blob = await makeZip(files, { onProgress: (n, total, name) => post({ type: 'progress', message: `Compressing ${name} (${n}/${total})` }) });
+      post({ type: 'zip', blob, name: `${moduleName()}-files.zip` });
       return;
     }
 

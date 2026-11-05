@@ -1,10 +1,10 @@
-// Hand edits: kept as operations, replayed onto whatever ground the tile is
-// cut from, never touching the rim.
+// Hand edits: kept as operations, replayed onto whatever ground the module
+// is cut from, never touching the rim.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeField } from '../lib/field.js';
-import { buildMap, buildWorld } from '../lib/build.js';
+import { buildTile, buildWorld } from '../lib/build.js';
 import { writeSTL } from '../lib/stl.js';
 import {
   applyGroundEdits, clearFilter, plantings, editsFor, strokeOf, distToStroke, falloff, rimWeight, EDIT_DEFAULTS,
@@ -132,90 +132,83 @@ test('cleared ground keeps its trees off; a planted wood has its own kind, densi
   assert.equal(p[0].inside(110, 100), true);
   assert.equal(p[0].inside(140, 100), false);
   assert.equal(plantings(ops)[0].seed, p[0].seed, 'the same stroke, the same trees');
-  assert.equal(editsFor({ edits: { B2: [ops[0], null] } }, 'B2').length, 1);
-  assert.deepEqual(editsFor({}, 'B2'), []);
+  assert.equal(editsFor({ edits: [ops[0], null] }).length, 1);
+  assert.deepEqual(editsFor({}), []);
 });
 
 /* ------------------------------------------------------------- the build */
 
-// A small map with nothing that moves with the ground except the ground: no
-// woods, no tarns, so the difference an edit makes is the edit itself.
+// A small module with nothing that moves with the ground except the ground:
+// no woods, no tarns, so the difference an edit makes is the edit itself.
 const RIDGE = { op: 'raise', path: [[50, 60], [150, 140]], radiusMM: 18, mm: 5 };
 const base = (seed, edits) => ({
-  name: 'ridge', seed, cols: 2, rows: 1, meshMM: 2.5, glacier: false,
-  rivers: [{ name: 'r', size: 'creek', path: [[0, 0], [1, 0]], sourceEdge: 'W', sinkEdge: 'E' }],
+  name: 'ridge', seed, meshMM: 2.5, glacier: false, worldGrid: 48,
+  channels: [{ name: 'c', widthMM: 20, path: [[0, 100], [200, 100]] }],
   lakes: { fillHollows: false },
   ...(edits ? { edits } : {}),
 });
-const tileOf = (r, label) => r.tiles.find((t) => t.label === label);
-const worstEdge = (r) => Math.max(...r.tiles.map((t) => t.edges.worst));
+const worstEdge = (r) => r.tile.edges.worst;
 
 test('DONE WHEN: a raised ridge survives a change of seed, and the edge check still reads zero', () => {
   for (const seed of [7, 8]) {
-    const plain = buildMap(base(seed));
-    const ridged = buildMap(base(seed, { B1: [RIDGE] }));
+    const plain = buildTile(base(seed));
+    const ridged = buildTile(base(seed, [RIDGE]));
     assert.ok(worstEdge(ridged) < 1e-6, `seed ${seed}: worst edge ${worstEdge(ridged)} mm`);
-    const a = tileOf(plain, 'B1').local;
-    const b = tileOf(ridged, 'B1').local;
-    // Along the crest, away from where the river was cut, the ground stands 5 mm higher.
+    const a = plain.tile.local;
+    const b = ridged.tile.local;
+    // Along the crest, away from where the channel was cut, the ground stands 5 mm higher.
     for (const [x, y] of [[50, 60], [75, 80], [125, 120], [150, 140]]) {
       const k = Math.round(y / a.step) * a.nx + Math.round(x / a.step);
       assert.ok(Math.abs(b.values[k] - a.values[k] - 5) < 1e-6, `seed ${seed}: +${(b.values[k] - a.values[k]).toFixed(4)} mm at ${x},${y}`);
     }
-    // And A1 has no edits, so A1 is byte for byte what it was.
-    assert.deepEqual(Buffer.from(writeSTL(tileOf(ridged, 'A1').tris, 'A1')), Buffer.from(writeSTL(tileOf(plain, 'A1').tris, 'A1')));
   }
   // The two seeds really are different ground under the same ridge.
-  const s7 = tileOf(buildMap(base(7, { B1: [RIDGE] })), 'B1').local.values;
-  const s8 = tileOf(buildMap(base(8, { B1: [RIDGE] })), 'B1').local.values;
+  const s7 = buildTile(base(7, [RIDGE])).tile.local.values;
+  const s8 = buildTile(base(8, [RIDGE])).tile.local.values;
   assert.notDeepEqual(Array.from(s7), Array.from(s8));
 });
 
 test('a spec with edits builds the same bytes twice, and a world handed in builds the same bytes as one grown', () => {
-  const spec = { ...base(3, { A1: [RIDGE, { op: 'smooth', path: [[100, 100]], radiusMM: 30 }], B1: [{ op: 'flatten', at: [100, 100], radiusMM: 25, toMM: 20 }] }), glacier: { cycles: 2 } };
-  const one = buildMap(spec);
-  const two = buildMap(spec);
-  const given = buildMap(spec, () => {}, { world: buildWorld(spec) });
-  for (let i = 0; i < one.tiles.length; i++) {
-    const bytes = Buffer.from(writeSTL(one.tiles[i].tris, 't'));
-    assert.deepEqual(Buffer.from(writeSTL(two.tiles[i].tris, 't')), bytes, `tile ${i} twice`);
-    assert.deepEqual(Buffer.from(writeSTL(given.tiles[i].tris, 't')), bytes, `tile ${i} on a world handed in`);
-  }
+  const spec = { ...base(3, [RIDGE, { op: 'smooth', path: [[100, 100]], radiusMM: 30 }, { op: 'flatten', at: [100, 60], radiusMM: 25, toMM: 20 }]), glacier: { cycles: 2 } };
+  const one = buildTile(spec);
+  const two = buildTile(spec);
+  const given = buildTile(spec, () => {}, { world: buildWorld(spec) });
+  const bytes = Buffer.from(writeSTL(one.tile.tris, 't'));
+  assert.deepEqual(Buffer.from(writeSTL(two.tile.tris, 't')), bytes, 'twice');
+  assert.deepEqual(Buffer.from(writeSTL(given.tile.tris, 't')), bytes, 'on a world handed in');
   assert.ok(worstEdge(one) < 1e-6);
 });
 
 test('cleared ground grows no trees and a planted wood grows where it was drawn', () => {
-  const woods = { canopy: [{ kind: 'deciduous', density: 0.6, tiles: ['A1'] }] };
-  const trees = (r, label) => tileOf(r, label).trees;
-  const plain = buildMap({ ...base(5), ...woods });
-  const cleared = buildMap({ ...base(5, { A1: [{ op: 'clear', path: [[40, 40], [160, 160]], radiusMM: 40 }] }), ...woods });
-  assert.ok(trees(cleared, 'A1') < trees(plain, 'A1') * 0.75, `${trees(cleared, 'A1')} trees left of ${trees(plain, 'A1')}`);
-  assert.equal(trees(plain, 'B1'), 0);
-  const planted = buildMap({ ...base(5, { B1: [{ op: 'plant', path: [[60, 150], [140, 150]], radiusMM: 25, kind: 'conifer' }] }), ...woods });
-  assert.ok(trees(planted, 'B1') > 5, `${trees(planted, 'B1')} trees planted`);
+  const woods = { canopy: [{ kind: 'deciduous', density: 0.6 }] };
+  const plain = buildTile({ ...base(5), ...woods });
+  const cleared = buildTile({ ...base(5, [{ op: 'clear', path: [[40, 40], [160, 160]], radiusMM: 40 }]), ...woods });
+  assert.ok(cleared.tile.trees < plain.tile.trees * 0.75, `${cleared.tile.trees} trees left of ${plain.tile.trees}`);
+  const bare = buildTile(base(5));
+  assert.equal(bare.tile.trees, 0);
+  const planted = buildTile(base(5, [{ op: 'plant', path: [[60, 150], [140, 150]], radiusMM: 25, kind: 'conifer' }]));
+  assert.ok(planted.tile.trees > 5, `${planted.tile.trees} trees planted`);
   assert.ok(worstEdge(planted) < 1e-6);
-  const w = tileOf(planted, 'B1').woods.find((x) => x.planted);
+  const w = planted.tile.woods.find((x) => x.planted);
   assert.equal(w.kind, 'conifer');
 });
 
-test('edits for a tile the map does not have are kept and said', () => {
-  const r = buildMap(base(2, { C9: [RIDGE] }));
-  assert.ok(r.problems.some((p) => p.kind === 'edit' && /C9/.test(p.message)));
-  const bad = buildMap(base(2, { A1: [{ op: 'bulldoze', at: [100, 100], radiusMM: 10 }] }));
+test('an edit nobody knows is said rather than guessed', () => {
+  const bad = buildTile(base(2, [{ op: 'bulldoze', at: [100, 100], radiusMM: 10 }]));
   assert.ok(bad.problems.some((p) => p.kind === 'edit' && /bulldoze/.test(p.message)));
 });
 
 test('tree edits keep their order: a wood planted after a clearing grows, one cleared after planting does not', () => {
   const plant = { op: 'plant', path: [[60, 150], [140, 150]], radiusMM: 25, kind: 'conifer' };
   const clear = { op: 'clear', path: [[60, 150], [140, 150]], radiusMM: 30 };
-  const trees = (edits) => tileOf(buildMap(base(5, { B1: edits })), 'B1').trees;
+  const trees = (edits) => buildTile(base(5, edits)).tile.trees;
   const planted = trees([plant]);
   assert.ok(planted > 5, `${planted} trees planted`);
   assert.equal(trees([plant, clear]), 0, 'cleared after it was planted');
   assert.equal(trees([clear, plant]), planted, 'planted after the clearing: the clearing was earlier');
   // A planted wood's trees come from its own stroke, not its place in the list.
   const raise = { op: 'raise', path: [[30, 30]], radiusMM: 8, mm: 1 };
-  const a = tileOf(buildMap(base(5, { B1: [raise, plant] })), 'B1').woods.find((w) => w.planted);
-  const b = tileOf(buildMap(base(5, { B1: [plant] })), 'B1').woods.find((w) => w.planted);
+  const a = buildTile(base(5, [raise, plant])).tile.woods.find((w) => w.planted);
+  const b = buildTile(base(5, [plant])).tile.woods.find((w) => w.planted);
   assert.equal(a.trees, b.trees);
 });

@@ -1,6 +1,6 @@
 // view.js — the camera, the theme, and the drawing primitives both views share.
 //
-// The canvas works in BOARD MILLIMETRES, north up. The camera is the only
+// The canvas works in MODULE MILLIMETRES, north up. The camera is the only
 // thing that knows about pixels: screen x = ox + X*s, screen y = oy - Y*s.
 // Row 0 is the south row, so the flip lives here and nowhere else.
 
@@ -13,7 +13,7 @@ export function readTheme() {
     edge: v('--c-edge'), label: v('--c-label'), water: v('--c-water'), waterSoft: v('--c-water-soft'),
     dry: v('--c-dry'), fall: v('--c-fall'), dam: v('--c-dam'), spring: v('--c-spring'), spill: v('--c-spill'),
     headon: v('--c-headon'), cliff: v('--c-cliff'), ridge: v('--c-ridge'), wood: v('--c-wood'),
-    select: v('--c-select'), ghost: v('--c-ghost'), ink: v('--ink'), dim: v('--dim'), panel: v('--panel'),
+    select: v('--c-select'), ghost: v('--c-ghost'), margin: v('--c-margin'), ink: v('--ink'), dim: v('--dim'), panel: v('--panel'),
     accent: v('--accent'),
   };
 }

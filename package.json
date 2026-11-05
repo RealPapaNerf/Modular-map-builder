@@ -1,7 +1,7 @@
 {
   "name": "modular-map-builder",
   "version": "0.1.0",
-  "description": "Procedurally generated, 3D-printable modular terrain tiles with rivers that actually flow between them",
+  "description": "Procedurally generated, 3D-printable terrain modules that mate with each other, with channels you draw across them and glaciers that carve them and melt away",
   "type": "module",
   "bin": { "mmb": "./bin/mmb.mjs" },
   "scripts": { "test": "node --test test/*.test.mjs", "test:browser": "node test/browser.mjs" },

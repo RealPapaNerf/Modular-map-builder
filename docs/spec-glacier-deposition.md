@@ -1,3 +1,5 @@
+> **Status, November 2026.** Part 1, till transport and deposition, is built, and so is a melt-out at the end of the run: the ice now leaves the bed entirely before the module is cut. The board this document refers to is gone; the builder makes one module at a time.
+
 # Spec: moraines, and telling the ice where to go
 
 Status: **part 1 BUILT 2026-11-04** (till transport and deposition, in

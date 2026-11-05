@@ -1,3 +1,5 @@
+> **Status, November 2026.** Written for the 3 x 3 board the builder used to make. The builder now grows ONE module at a time (see the README); `buildMap` is `buildTile`, the stages below still describe the real seams in it, and the costs are per module. The editor already keeps the grown world between builds, which is the first of these stages.
+
 # Spec: a staged pipeline
 
 Status: **design, not built.** Written 2026-11-04.
