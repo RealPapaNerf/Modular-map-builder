@@ -1,6 +1,16 @@
 # Spec: moraines, and telling the ice where to go
 
-Status: **design, not built.** Written 2026-11-04.
+Status: **part 1 BUILT 2026-11-04** (till transport and deposition, in
+`lib/glacier.js`); **part 2 still design** (iceMask, terminusLine). Written
+2026-11-04.
+
+What was built follows this document closely, with two departures worth
+noting. The guard rail is on how much higher a point finishes than the bed
+it started from, not on a separate standing-till field -- that field does
+not survive mass wasting, which moves the bed without knowing about it.
+And `tillYield` ships at 0.55 rather than the 0 this document recommends:
+the staged landing was the right call for a change that had to be invisible,
+but moraines were the point, so they are on.
 Companions: [spec-pipeline.md](spec-pipeline.md), [spec-editor.md](spec-editor.md).
 
 ---

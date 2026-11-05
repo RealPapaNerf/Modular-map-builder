@@ -1175,25 +1175,29 @@ grown map in 3D, and edits by hand on it (phases 1 to 3 of the
 Not built yet: keys between the **plates** (so a seam with a level change is
 registered by more than friction); a manifold, for feeding more than one
 spring from one pump; buffer chambers under a lid, which need rock over air;
-mesa stratigraphy wired into a fluvial incision pass (`makeStrata` exists,
-nothing calls it); and **sediment deposition** — the ice erodes but never
-puts anything down, so there are no moraines and none of the lakes a moraine
-would dam.
+and mesa stratigraphy wired into a fluvial incision pass (`makeStrata`
+exists, nothing calls it).
 
-Designed, not built. Three specs in `docs/`, written to be picked up whole in
-a later session:
+**Sediment deposition is built.** The ice carries what it cuts and puts it
+down where it can no longer hold it, so there are terminal, lateral and
+recessional moraines, and the moraine-dammed lakes that go with them — which
+is most real alpine lakes. See `tillYield` in `lib/glacier.js`; set it to 0
+for the old erosion-only behaviour.
+
+Designed, not built. The other two specs in `docs/`, written to be picked up
+whole in a later session:
 
 - [**A staged pipeline**](docs/spec-pipeline.md) — so a build can be stopped,
   looked at, edited and resumed, instead of running end to end on every
   change. The ice is two thirds of the cost of a build and nothing downstream
   of it touches the bed, so caching it makes editing the water nearly free.
-- [**Moraines, and telling the ice where to go**](docs/spec-glacier-deposition.md)
-  — till transport and deposition, plus a mask for where the snow collects and
-  a line for where the snout stops. `fillHollows` already floods any closed
-  basin, so a moraine ridge produces a lake with no new lake code.
-- [**A drawing editor**](docs/spec-editor.md) — a plan view of the map you
-  draw the spine, the ice and the rivers onto, with the plate levels shown
-  live as you draw, replacing the JSON panel.
+- [**Telling the ice where to go**](docs/spec-glacier-deposition.md) — part 1
+  of this, till transport and deposition, is now built; what remains is part
+  2, a mask for where the snow collects and a line for where the snout stops.
+- [**A drawing editor**](docs/spec-editor.md) — written before the editor
+  existed, and largely overtaken by it: phases 1 to 3 built the plan view,
+  the tool palette and the 3D. Read it as the original brief, not as a
+  description of the app.
 
 Next: **phase 4 of the water table**, the board properly — ponds that back
 up through the tiles behind them and merge into one, the design checker saying
