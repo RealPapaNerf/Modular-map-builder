@@ -23,6 +23,7 @@ import { BOARD_TOOLS, TILE_TOOLS, BOARD_GROUPS, TILE_GROUPS, REFINE_TOOLS, REFIN
 import { applyGroundEdits, editsFor, GROUND_OPS, EDIT_DEFAULTS } from '../lib/edits.js';
 import { renderInspector } from './inspector.js';
 import { reportHTML, downloadsHTML, fmt, bytes, esc } from './report.js';
+import { migrateSpec, needsMigration } from '../lib/scale.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -62,12 +63,16 @@ const state = {
   lastChanged: [],
 };
 
+let migratedThisLoad = false;
+
 function loadSpec() {
   try {
     const raw = localStorage.getItem(STORE);
     if (raw) {
       const v = JSON.parse(raw);
-      if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        return needsMigration(v) ? migrateSpec(v, v.contract?.tileMM ?? 200) : v;
+      }
     }
   } catch { /* private mode, or a spec that will not parse: start from the example */ }
   return structuredClone(EXAMPLE_SPEC);
@@ -144,6 +149,15 @@ function record(label) {
 }
 
 function setSpec(next, label = 'edit', { keepJson = false } = {}) {
+  // A map written before the units changed still opens. needsMigration only
+  // fires on a spec that actually carries the old world-metre fields, so
+  // this is a no-op for anything written since. See lib/scale.js for what
+  // survives the conversion (horizontal, exactly) and what cannot (vertical,
+  // which the old format squashed and therefore never pinned down).
+  if (needsMigration(next)) {
+    next = migrateSpec(next, next.contract?.tileMM ?? 200);
+    migratedThisLoad = true;
+  }
   state.spec = next;
   replan();
   record(label);
@@ -1358,8 +1372,11 @@ el.openFile.addEventListener('change', async () => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('not a spec');
     if (state.view.mode === 'tile') closeTile();
     state.selection = null;
+    migratedThisLoad = false;
     setSpec(v, `open ${f.name}`);
-    say(`Opened ${f.name}.`, 'ok');
+    say(migratedThisLoad
+      ? `Opened ${f.name}, and converted it from world metres to millimetres. Heights will have changed: the old format squashed them to fit a relief budget, so they never had a fixed printed height. Check Mountains in the inspector.`
+      : `Opened ${f.name}.`, 'ok');
   } catch (e) {
     say(`Could not open ${f.name}: ${e.message}`, 'err');
   }

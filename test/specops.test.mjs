@@ -13,13 +13,14 @@ function drawTheExample() {
   ops.growBoard(s, 'E'); ops.growBoard(s, 'E');
   ops.growBoard(s, 'N'); ops.growBoard(s, 'N');
 
-  Object.assign(s, { name: 'glacier-valley', seed: 7, reliefMM: 42, meshMM: 0.9, worldSizeM: 16000, spineHeightM: 1600 });
+  Object.assign(s, { name: 'glacier-valley', seed: 7, meshMM: 0.9, metresPerMM: 25, spineHeightMM: 60 });
   ops.setPath(s, 'glacier.cycles', 30);
+  ops.setPath(s, 'glacier.elaSwingMM', 18);
   ops.setPath(s, 'contract', { tileMM: 200, plateMM: 10, outletZMM: 6, edgeLandMM: 22 });
 
   ops.setSpine(s, [{ x: 60, y: 510 }, { x: 300, y: 360 }, { x: 540, y: 480 }]);
   const v = ops.addVolcano(s, { x: 468, y: 132 }, 90);
-  Object.assign(s.volcanoes[v], { heightM: 800, breachAzimuthDeg: 210 });
+  Object.assign(s.volcanoes[v], { heightMM: 32, breachAzimuthDeg: 210 });
 
   // From above B3, straight down and off the bottom of the board.
   const main = ops.addRiver(s, ops.strokeToRiver(s, [{ x: 300, y: 650 }, { x: 302, y: 300 }, { x: 299, y: -40 }]));

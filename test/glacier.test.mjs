@@ -202,8 +202,13 @@ test('creep is what sorts cirques from grid noise', async () => {
   // square of its wavenumber, so it takes the pits out and leaves the broad
   // basins -- which is the whole reason it is in the loop.
   const { depressionStats } = await import('../lib/basins.js');
+  // Till OFF on purpose. This test is about creep against grid noise, and
+  // deposition confounds it: a moraine makes a real closed basin that is
+  // many cells across, so with till on the "are they all single cells?"
+  // premise stops being a statement about pitting. Deposition has its own
+  // tests below.
   const run = (D) => {
-    const r = glaciate(alpineValley(64, 200), { elaM: 2300, cycles: 20, hillslopeD: D });
+    const r = glaciate(alpineValley(64, 200), { elaM: 2300, cycles: 20, hillslopeD: D, tillYield: 0 });
     const st = depressionStats(r.bed, { minDepthM: 10 });
     return { count: st.count, tiny: st.basins.filter((b) => b.cells <= 2).length };
   };
@@ -213,4 +218,100 @@ test('creep is what sorts cirques from grid noise', async () => {
   assert.ok(off.tiny / off.count > 0.8, 'and they should almost all be a cell or two');
   assert.ok(on.count < off.count / 3, `creep should clear most of them: ${on.count} against ${off.count}`);
   assert.ok(on.tiny < off.tiny / 3, `and the single-cell pits especially: ${on.tiny} against ${off.tiny}`);
+});
+
+// ---------------------------------------------------------------------------
+// Till: what the ice carries, and where it puts it down.
+//
+// These are the tests for the deposition the file's header used to say was
+// deliberately absent. The one that matters most is the first: if mass does
+// not balance, the advection is leaking and every landform below is luck.
+// ---------------------------------------------------------------------------
+
+test('till conserves mass: what is cut is carried, dropped or exported', () => {
+  const r = glaciate(alpineValley(64, 200), { elaM: 2300, cycles: 12, tillYield: 0.55 });
+  const st = r.stats;
+  // Everything eroded became flour (exported) or till, and every metre of
+  // till is either still riding on the ice or has been put down.
+  const eroded = st.tillExportedM / (1 - 0.55);
+  const accounted = st.tillExportedM + st.tillDepositedM + st.tillInTransitM;
+  const err = Math.abs(accounted - eroded) / eroded;
+  assert.ok(err < 0.02,
+    `mass is leaking: cut ${eroded.toFixed(0)} m against ${accounted.toFixed(0)} m accounted (${(err * 100).toFixed(2)}%)`);
+  assert.ok(st.tillDepositedM > 0, 'the ice should have put something down');
+});
+
+test('tillYield 0 leaves the bed exactly as it was before deposition existed', () => {
+  // The regression that lets this land without re-tuning every map: with the
+  // yield at zero not one cell may move, so any map that looked right before
+  // still does.
+  const a = glaciate(alpineValley(56, 200), { elaM: 2300, cycles: 8, tillYield: 0 });
+  const b = glaciate(alpineValley(56, 200), { elaM: 2300, cycles: 8, tillYield: 0, tillCapacityK: 99, maxTillM: 0 });
+  for (let k = 0; k < a.bed.values.length; k++) {
+    assert.equal(a.bed.values[k], b.bed.values[k], `cell ${k} moved with the yield at zero`);
+  }
+  assert.equal(a.stats.tillDepositedM, 0);
+});
+
+test('deposition is what finally produces moraine-dammed basins', async () => {
+  // The observation that started this: the glaciers were not making lakes.
+  // Most real alpine lakes are dammed by a moraine rather than held in a
+  // rock basin, so with no deposition the model could only make the rare
+  // kind. This is the direct test of "does this get me lakes" -- it asks
+  // depressionStats, which is the same call fillHollows makes.
+  const { depressionStats } = await import('../lib/basins.js');
+  const run = (tillYield) => {
+    const r = glaciate(alpineValley(72, 200), { elaM: 2300, cycles: 16, tillYield });
+    return depressionStats(r.bed, { minDepthM: 4 });
+  };
+  const dry = run(0);
+  const wet = run(0.55);
+  assert.ok(wet.count > dry.count,
+    `deposition should close more basins than bare rock: ${wet.count} against ${dry.count}`);
+  assert.ok(wet.maxDepthM > dry.maxDepthM,
+    `and a deeper one: ${wet.maxDepthM.toFixed(1)} m against ${dry.maxDepthM.toFixed(1)} m`);
+});
+
+test('a moraine stands above the ground it was dropped on', () => {
+  // A terminal moraine is a RIDGE, not a veneer, so the bed has to finish
+  // HIGHER than it started.
+  //
+  // Note the baseline is not zero: mass wasting moves rock downslope, so a
+  // few dozen cells at the toe of a slope rise even with no till at all.
+  // That is correct, and it is why this measures deposition against that
+  // baseline rather than against nothing.
+  const base = alpineValley(64, 200);
+  const dry = glaciate(base, { elaM: 2300, cycles: 14, tillYield: 0 });
+  const wet = glaciate(base, { elaM: 2300, cycles: 14, tillYield: 0.55 });
+  let raisedDry = 0;
+  let raisedWet = 0;
+  let highest = 0;
+  for (let k = 0; k < base.values.length; k++) {
+    if (dry.bed.values[k] > base.values[k] + 1) raisedDry++;
+    const up = wet.bed.values[k] - base.values[k];
+    if (up > 1) raisedWet++;
+    if (up > highest) highest = up;
+  }
+  let highestDry = 0;
+  for (let k = 0; k < base.values.length; k++) {
+    const up = dry.bed.values[k] - base.values[k];
+    if (up > highestDry) highestDry = up;
+  }
+  assert.ok(raisedWet > raisedDry * 3,
+    `deposition should build ground up far more widely than slumping alone: ${raisedWet} cells against ${raisedDry}`);
+  assert.ok(highest > highestDry * 2,
+    `and stand far prouder of it: ${highest.toFixed(1)} m against ${highestDry.toFixed(1)} m of slumped rock`);
+  assert.ok(wet.stats.maxMoraineM > 5);
+});
+
+test('a snowline that swings leaves more than one ridge down the valley', () => {
+  // Recessional moraines are not implemented; they fall out of the ELA
+  // oscillation that was already there, once deposition exists. Each
+  // stillstand drops its own ridge, so a swinging snowline should leave a
+  // more broken long profile than a steady one that parks at one terminus.
+  const steady = glaciate(alpineValley(72, 200), { elaM: 2300, cycles: 18, elaSwingM: 0, tillYield: 0.55 });
+  const swinging = glaciate(alpineValley(72, 200), { elaM: 2300, cycles: 18, elaSwingM: 450, glacialCycles: 3, tillYield: 0.55 });
+  assert.ok(swinging.stats.morainedFraction > steady.stats.morainedFraction,
+    `a swinging snowline should spread till over more ground: ` +
+    `${(swinging.stats.morainedFraction * 100).toFixed(1)}% against ${(steady.stats.morainedFraction * 100).toFixed(1)}%`);
 });

@@ -5,6 +5,7 @@ import { solveBoard, describeBoard, plan, boardFromSpec, turnTile, turnEdge, fac
 import { makeContract, edgeSignature, EDGES } from '../lib/contract.js';
 import { cornerLattice } from '../lib/build.js';
 import { EXAMPLE_SPEC } from '../lib/example.js';
+import { makeField } from '../lib/field.js';
 
 // The blueprint's numbers: 12 in, 2 out, a 10 mm fall, so a tile one riser
 // below its neighbour takes the river at exactly the height it left.
@@ -375,4 +376,49 @@ test('without ground the rims sit at their floor; a raised corner lifts four til
   assert.equal(at('B1').nw, 32);
   assert.equal(at('A1').sw, 22, 'and nothing else moved');
   assert.equal(p.seams.filter((s) => s.kind === 'cliff').length, 0, 'every seam still mates');
+});
+
+test('the example map runs wet from its springs to the tray', () => {
+  // THE BUG THIS CATCHES. cornerLattice is called from three places, and
+  // when its vertical argument changed from a reliefMM budget to a
+  // metres-per-mm scale, one of the three -- the one in boardFromSpec, the
+  // one the EDITOR uses -- was left passing the old name. The new name came
+  // through undefined, Math.max(1e-9, undefined) is NaN, every rim height
+  // became NaN, and every comparison against a NaN rim is false, so the
+  // water stopped propagating: the editor showed the shipped example with
+  // four dry beds while the CLI, which used a different call site, showed it
+  // running perfectly. Two hundred and thirty tests passed through it,
+  // because nothing asserted that the example actually flows.
+  // WITH A WORLD, which is the case that broke. The editor passes the
+  // ground it has (`planBoard(spec, { world })`, app/main.js) so the rims
+  // follow the terrain -- that is the footer's "rims from the ground".
+  // cornerLattice only touches the vertical scale when a world is present,
+  // so a plan() with no world sails straight past this defect: the first
+  // version of this test did exactly that and passed with the bug in place.
+  const world = makeField(32, 32, 500, 0, 0);
+  for (let j = 0; j < 32; j++) {
+    for (let i = 0; i < 32; i++) world.values[j * 32 + i] = 300 + 40 * j + 8 * i;
+  }
+  const p = plan(EXAMPLE_SPEC, { world });
+  assert.equal(p.rims, 'ground', 'this is the with-a-world case');
+  for (const [k, v] of p.corners) assert.ok(Number.isFinite(v), `corner ${k} came out ${v}`);
+  assert.equal(p.counts.spring, 2, 'two springs feed the example');
+  assert.equal(p.counts.flow, 2, 'and the water runs through two seams');
+  assert.equal(p.counts.waterfall, 1);
+  assert.equal(p.counts.drains, 1, 'and leaves the board once');
+  assert.ok(!p.counts.dry, `no channel should be a dry bed, got ${p.counts.dry}`);
+  const wet = p.seams.filter((s) => s.wet).length;
+  assert.ok(wet >= 5, `the water should reach most seams, only ${wet} are wet`);
+});
+
+test('corner heights are finite numbers, with a world and without', () => {
+  // The same class of defect, stated as the invariant rather than the
+  // symptom: whatever is passed for the vertical scale, a corner height is
+  // a number you could cut a plate to.
+  const c = makeContract({});
+  const levels = new Map([['0,0', 0], ['1,0', 0], ['0,1', 0], ['1,1', 0]]);
+  const grid = cornerLattice(null, c, levels, { cols: 2, rows: 2, metresPerMM: 25 });
+  for (const [k, v] of grid) assert.ok(Number.isFinite(v), `corner ${k} is ${v}`);
+  const read = boardFromSpec(EXAMPLE_SPEC);
+  for (const [k, v] of read.corners) assert.ok(Number.isFinite(v), `example corner ${k} is ${v}`);
 });

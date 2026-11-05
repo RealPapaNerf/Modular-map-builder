@@ -20,6 +20,7 @@
 import { columnLabel, EDGES, OPPOSITE, STEP, makeContract } from '../lib/contract.js';
 import { boardFromSpec } from '../lib/board.js';
 import { EDIT_DEFAULTS, editsFor, strokeWeight } from '../lib/edits.js';
+import { worldSizeM as worldSizeOf, DEFAULT_M_PER_MM } from '../lib/scale.js';
 
 /* ------------------------------------------------------------------ basics */
 
@@ -61,7 +62,7 @@ export function toWorld(spec, { x, y }) {
 /** How many metres of the world one board millimetre is, each way. */
 export function metresPerMM(spec) {
   const { cols, rows, T } = dims(spec);
-  const W = spec.worldSizeM || 16000;
+  const W = worldSizeOf(spec, spec.contract?.tileMM ?? 200);
   return { x: W / (cols * T), y: W / (rows * T) };
 }
 
@@ -94,7 +95,7 @@ export function tidy(spec) {
 
 /** A board with one plain tile on it and nothing drawn. */
 export function blankSpec() {
-  return { name: 'untitled', seed: 1, cols: 1, rows: 1, reliefMM: 40, meshMM: 0.9 };
+  return { name: 'untitled', seed: 1, cols: 1, rows: 1, meshMM: 0.9, metresPerMM: DEFAULT_M_PER_MM };
 }
 
 /* ------------------------------------------------------------- per tile */
@@ -565,7 +566,9 @@ export function setSpine(spec, pts) {
 export function addVolcano(spec, at, radiusMM, o = {}) {
   const m = metresPerMM(spec);
   spec.volcanoes = spec.volcanoes || [];
-  spec.volcanoes.push({ at: toWorld(spec, at), heightM: o.heightM ?? 900, baseRadiusM: Math.round(radiusMM * m.x), ...(o.breachAzimuthDeg != null ? { breachAzimuthDeg: o.breachAzimuthDeg } : {}) });
+  // The drawn radius is already millimetres on the board, which is what
+  // the spec wants now -- it used to be multiplied up into world metres.
+  spec.volcanoes.push({ at: toWorld(spec, at), heightMM: o.heightMM ?? 32, baseRadiusMM: Math.round(radiusMM), ...(o.breachAzimuthDeg != null ? { breachAzimuthDeg: o.breachAzimuthDeg } : {}) });
   return spec.volcanoes.length - 1;
 }
 
@@ -798,13 +801,13 @@ export function describeEdit(e) {
 /* --------------------------------------------------------------- printing */
 
 /** The order the example writes its keys in, so the JSON reads the same however it was drawn. */
-export const KEY_ORDER = ['name', 'seed', 'cols', 'rows', 'reliefMM', 'terraceMM', 'meshMM', 'worldSizeM', 'worldGrid',
-  'spineHeightM', 'spineWidthM', 'baseElevM', 'roughness', 'spine', 'flats', 'volcanoes', 'glacier', 'reposeDeg', 'reposePasses',
+export const KEY_ORDER = ['name', 'seed', 'cols', 'rows', 'terraceMM', 'meshMM', 'metresPerMM', 'worldGrid',
+  'spineHeightMM', 'spineWidthMM', 'baseElevMM', 'roughness', 'spine', 'flats', 'volcanoes', 'glacier', 'reposeDeg', 'reposePasses',
   'levels', 'falls', 'waterfalls', 'rot', 'cornerRaise', 'rivers', 'canopy', 'lakes', 'fountains', 'edits', 'joints', 'tray', 'contract'];
 
 const ORDERS = {
   canopy: ['kind', 'crownMM', 'heightMM', 'density', 'spacingMM', 'minZMM', 'maxZMM', 'thinningMM', 'maxSlopeDeg', 'tiles', 'region'],
-  volcanoes: ['at', 'heightM', 'baseRadiusM', 'craterRadiusM', 'craterDepthM', 'breachAzimuthDeg'],
+  volcanoes: ['at', 'heightMM', 'baseRadiusMM', 'craterRadiusMM', 'craterDepthMM', 'breachAzimuthDeg'],
   flats: ['at', 'radiusM', 'elevM'],
   lakes: ['fillHollows', 'depthMM', 'shoreMM', 'profile', 'place'],
   fountains: ['auto', 'tubeOdMM', 'poolRadiusMM', 'place'],

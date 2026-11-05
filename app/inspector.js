@@ -11,6 +11,7 @@ import { LAKE_DEFAULTS, PROFILES } from '../lib/lake.js';
 import { FOUNTAIN_DEFAULTS } from '../lib/fountain.js';
 import { CANOPY_DEFAULTS } from '../lib/canopy.js';
 import { facingEdge } from '../lib/board.js';
+import { DEFAULT_M_PER_MM } from '../lib/scale.js';
 import * as ops from './specops.js';
 
 const SIZE_IDS = Object.keys(SIZES);
@@ -120,6 +121,8 @@ export function renderInspector(root, api) {
 function mapPanel(api) {
   const s = api.state.spec;
   const { cols, rows, T } = ops.dims(s);
+  // The board's longest side in mm; the size placeholders are fractions of it.
+  const boardSpanMM = Math.max(cols, rows) * T;
   const c = makeContract(s.contract || {});
   const p = api.state.plan;
   const springs = p.springs.length;
@@ -131,19 +134,19 @@ function mapPanel(api) {
       h('div', { class: 'field' }, h('span', {}, 'Seed'), h('span', { class: 'ctl' },
         numInput(api, 'Seed', (x) => x.seed, (x, v) => { x.seed = v ?? 1; }, { step: 1, min: 0 }),
         h('button', { type: 'button', class: 'mini', title: 'A different map, same rules', onclick: () => api.commit((x) => { x.seed = Math.floor(Math.random() * 100000); }, 'roll the seed') }, 'Roll'))),
-      num(api, 'Relief', { get: (x) => x.reliefMM, set: (x, v) => { x.reliefMM = v; }, unit: 'mm', min: 5, max: 200, placeholder: '40', title: 'The height the whole world maps onto, on the print' }),
+      num(api, 'Scale', { get: (x) => x.metresPerMM, set: (x, v) => { if (v === undefined) delete x.metresPerMM; else x.metresPerMM = v; }, unit: 'm/mm', step: 1, min: 1, placeholder: String(DEFAULT_M_PER_MM), title: 'Metres of real ground per millimetre of print. The only place metres appear: it is what lets the glacier behave like a glacier. Everything else you type is millimetres.' }),
     ),
     group('Ground',
-      num(api, 'World size', { get: (x) => (x.worldSizeM ? x.worldSizeM / 1000 : undefined), set: (x, v) => { if (v === undefined) delete x.worldSizeM; else x.worldSizeM = Math.round(v * 1000); }, unit: 'km', step: 0.5, min: 1, placeholder: '16' }),
-      num(api, 'Mountains', { get: (x) => x.spineHeightM, set: (x, v) => { if (v === undefined) delete x.spineHeightM; else x.spineHeightM = v; }, unit: 'm', step: 50, min: 0, placeholder: '1500', title: 'Peak height on the ridge' }),
-      num(api, 'Ridge width', { get: (x) => x.spineWidthM, set: (x, v) => { if (v === undefined) delete x.spineWidthM; else x.spineWidthM = v; }, unit: 'm', step: 100, min: 100, placeholder: String(Math.round((s.worldSizeM || 16000) * 0.22)) }),
+      num(api, 'Mountains', { get: (x) => x.spineHeightMM, set: (x, v) => { if (v === undefined) delete x.spineHeightMM; else x.spineHeightMM = v; }, unit: 'mm', step: 1, min: 0, placeholder: '60', title: 'How far the ridge stands above the low ground, on the print' }),
+      num(api, 'Ridge width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.22)) }),
       num(api, 'Roughness', { get: (x) => x.roughness, set: (x, v) => { if (v === undefined) delete x.roughness; else x.roughness = v; }, step: 0.02, min: 0, max: 1, placeholder: '0.22' }),
     ),
     group('Ice',
       check(api, 'Glaciate', { get: (x) => x.glacier !== false, set: (x, on) => { x.glacier = on ? (x.glacier && typeof x.glacier === 'object' ? x.glacier : { cycles: 30 }) : false; } }),
       s.glacier !== false ? [
         num(api, 'Cycles', { get: (x) => x.glacier?.cycles, set: (x, v) => ops.setPath(x, 'glacier.cycles', v), min: 1, max: 200, placeholder: 'default' }),
-        num(api, 'Snowline swing', { get: (x) => x.glacier?.elaSwingM, set: (x, v) => ops.setPath(x, 'glacier.elaSwingM', v), unit: 'm', step: 50, min: 0, placeholder: '450' }),
+        num(api, 'Snowline swing', { get: (x) => x.glacier?.elaSwingMM, set: (x, v) => ops.setPath(x, 'glacier.elaSwingMM', v), unit: 'mm', step: 1, min: 0, placeholder: '18', title: 'How far the snowline moves either side of its mean. This is what leaves a staircase of cirques and a line of recessional moraines instead of one clean trough.' }),
+        num(api, 'Till kept', { get: (x) => x.glacier?.tillYield, set: (x, v) => ops.setPath(x, 'glacier.tillYield', v), step: 0.05, min: 0, max: 1, placeholder: '0.55', title: 'How much of the rock the ice cuts it carries and puts back down as moraines, rather than exporting as rock flour. 0 is the old behaviour: no moraines, and only rock-basin lakes.' }),
         num(api, 'Advances', { get: (x) => x.glacier?.glacialCycles, set: (x, v) => ops.setPath(x, 'glacier.glacialCycles', v), min: 1, max: 12, placeholder: '3' }),
       ] : null,
     ),
@@ -403,12 +406,15 @@ function describeQuiet(sm) {
 function spinePanel(api) {
   const s = api.state.spec;
   if (!s.spine) throw new Error('no spine');
+  // The board's longest side in mm, which is what the size placeholders
+  // are a fraction of. cols/rows/T belong to mapPanel, not here.
+  const boardSpanMM = Math.max(s.cols || 3, s.rows || 3) * (s.contract?.tileMM ?? 200);
   return [
     h('h2', {}, 'The ridge'),
     h('p', { class: 'sub' }, `${s.spine.length} points across the map. Drag a point to move it.`),
     group('Range',
-      num(api, 'Peak height', { get: (x) => x.spineHeightM, set: (x, v) => { if (v === undefined) delete x.spineHeightM; else x.spineHeightM = v; }, unit: 'm', step: 50, min: 0, placeholder: '1500' }),
-      num(api, 'Half-width', { get: (x) => x.spineWidthM, set: (x, v) => { if (v === undefined) delete x.spineWidthM; else x.spineWidthM = v; }, unit: 'm', step: 100, min: 100, placeholder: String(Math.round((s.worldSizeM || 16000) * 0.22)) }),
+      num(api, 'Peak height', { get: (x) => x.spineHeightMM, set: (x, v) => { if (v === undefined) delete x.spineHeightMM; else x.spineHeightMM = v; }, unit: 'mm', step: 1, min: 0, placeholder: '60' }),
+      num(api, 'Half-width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.22)) }),
     ),
     group('Points', facts(s.spine.map((p, i) => { const b = ops.toBoard(s, p); return [`${i + 1}`, `${Math.round(b.x)}, ${Math.round(b.y)} mm`]; }))),
     h('div', { class: 'row-btns' }, del('Delete the ridge', () => { api.commit((x) => { delete x.spine; }, 'delete the ridge'); api.select(null); })),
@@ -419,6 +425,9 @@ function volcanoPanel(api, sel) {
   const s = api.state.spec;
   const v = s.volcanoes?.[sel.index];
   if (!v) throw new Error('no volcano');
+  // The board's longest side in mm, which is what the size placeholders
+  // are a fraction of. cols/rows/T belong to mapPanel, not here.
+  const boardSpanMM = Math.max(s.cols || 3, s.rows || 3) * (s.contract?.tileMM ?? 200);
   const i = sel.index;
   const at = (k) => (x) => x.volcanoes[i][k];
   const put = (k) => (x, val) => { if (val === undefined) delete x.volcanoes[i][k]; else x.volcanoes[i][k] = val; };
@@ -427,10 +436,10 @@ function volcanoPanel(api, sel) {
     h('h2', {}, 'Volcano'),
     h('p', { class: 'sub' }, `At ${Math.round(b.x)}, ${Math.round(b.y)} mm on the board.`),
     group('Cone',
-      num(api, 'Height', { get: at('heightM'), set: put('heightM'), unit: 'm', step: 50, min: 0, placeholder: '900', id: 'v.heightM' }),
-      num(api, 'Base radius', { get: at('baseRadiusM'), set: put('baseRadiusM'), unit: 'm', step: 100, min: 100, placeholder: String(Math.round((s.worldSizeM || 16000) * 0.18)), id: 'v.baseRadiusM' }),
-      num(api, 'Crater radius', { get: at('craterRadiusM'), set: put('craterRadiusM'), unit: 'm', step: 20, min: 0, placeholder: '400', id: 'v.craterRadiusM' }),
-      num(api, 'Crater depth', { get: at('craterDepthM'), set: put('craterDepthM'), unit: 'm', step: 10, min: 0, placeholder: '180', id: 'v.craterDepthM' }),
+      num(api, 'Height', { get: at('heightMM'), set: put('heightMM'), unit: 'mm', step: 1, min: 0, placeholder: '32', id: 'v.heightMM' }),
+      num(api, 'Base radius', { get: at('baseRadiusMM'), set: put('baseRadiusMM'), unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.18)), id: 'v.baseRadiusMM' }),
+      num(api, 'Crater radius', { get: at('craterRadiusMM'), set: put('craterRadiusMM'), unit: 'mm', step: 1, min: 0, placeholder: '16', id: 'v.craterRadiusMM' }),
+      num(api, 'Crater depth', { get: at('craterDepthMM'), set: put('craterDepthMM'), unit: 'mm', step: 1, min: 0, placeholder: '7', id: 'v.craterDepthMM' }),
       num(api, 'Breached toward', { get: at('breachAzimuthDeg'), set: put('breachAzimuthDeg'), unit: '°', step: 5, min: 0, max: 359, placeholder: 'none', id: 'v.breach', title: '0 is east, 90 north, as the generator measures it' }),
       h('p', { class: 'hint' }, 'A breached wall is what most real cones have. 0 is east and 90 north.'),
     ),
@@ -442,6 +451,9 @@ function flatPanel(api, sel) {
   const s = api.state.spec;
   const f = s.flats?.[sel.index];
   if (!f) throw new Error('no flat');
+  // The board's longest side in mm, which is what the size placeholders
+  // are a fraction of. cols/rows/T belong to mapPanel, not here.
+  const boardSpanMM = Math.max(s.cols || 3, s.rows || 3) * (s.contract?.tileMM ?? 200);
   const i = sel.index;
   const at = (k) => (x) => x.flats[i][k];
   const put = (k) => (x, val) => { if (val === undefined) delete x.flats[i][k]; else x.flats[i][k] = val; };
@@ -449,8 +461,8 @@ function flatPanel(api, sel) {
     h('h2', {}, 'Flat'),
     h('p', { class: 'sub' }, 'Ground the map keeps level.'),
     group('Flat',
-      num(api, 'Radius', { get: at('radiusM'), set: put('radiusM'), unit: 'm', step: 100, min: 100, placeholder: String(Math.round((s.worldSizeM || 16000) * 0.1)), id: 'f.radiusM' }),
-      num(api, 'Level at', { get: at('elevM'), set: put('elevM'), unit: 'm', step: 10, placeholder: 'the ground there', id: 'f.elevM' }),
+      num(api, 'Radius', { get: at('radiusMM'), set: put('radiusMM'), unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(boardSpanMM * 0.1)), id: 'f.radiusMM' }),
+      num(api, 'Level at', { get: at('elevMM'), set: put('elevMM'), unit: 'mm', step: 1, placeholder: 'the ground there', id: 'f.elevMM' }),
     ),
     h('div', { class: 'row-btns' }, del('Delete flat', () => { api.commit((x) => { x.flats.splice(i, 1); ops.tidy(x); }, 'delete a flat'); api.select(null); })),
   ];

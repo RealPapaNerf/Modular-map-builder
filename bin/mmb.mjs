@@ -20,6 +20,21 @@ import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
 import { EXAMPLE_SPEC } from '../lib/example.js';
+import { migrateSpec, needsMigration } from '../lib/scale.js';
+
+/**
+ * Read a spec file, bringing an old one written in world metres up to
+ * millimetres on the way in. See lib/scale.js: horizontal survives exactly,
+ * vertical cannot, because the old format never pinned it down.
+ */
+function readSpec(path) {
+  const raw = JSON.parse(readFileSync(path, 'utf8'));
+  if (!needsMigration(raw)) return raw;
+  process.stderr.write(
+    `${path} is written in world metres. Converting to millimetres; heights will differ ` +
+    `from what that file used to print, because the old format squashed them to a relief budget.\n`);
+  return migrateSpec(raw, raw.contract?.tileMM ?? 200);
+}
 import { plan as planBoard } from '../lib/board.js';
 
 const args = process.argv.slice(2);
@@ -93,7 +108,7 @@ if (cmd === 'canopy') {
   // before anything has been grown; that only ever errs toward overtopping.
   const specPath = args[1];
   if (!specPath) { console.error('need a spec file; try: node bin/mmb.mjs example > map.json'); process.exit(2); }
-  const p = planBoard(JSON.parse(readFileSync(specPath, 'utf8')));
+  const p = planBoard(readSpec(specPath));
   for (const s2 of p.sentences) console.log(`  ${s2.text}`);
   const shown = p.seams.filter((s2) => s2.kind !== 'plane');
   if (shown.length) {
@@ -117,7 +132,7 @@ if (cmd === 'canopy') {
 } else if (cmd === 'check' || cmd === 'build') {
   const specPath = args[1];
   if (!specPath) { console.error('need a spec file; try: node bin/mmb.mjs example > map.json'); process.exit(2); }
-  const spec = JSON.parse(readFileSync(specPath, 'utf8'));
+  const spec = readSpec(specPath);
   if (cmd === 'check') spec.glacier = false; // check is about the contract, not the rock
   const t0 = Date.now();
   const r = buildMap(spec, (m) => process.stderr.write(`\r${m.padEnd(40)}`));
