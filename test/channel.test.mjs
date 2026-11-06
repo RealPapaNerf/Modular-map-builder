@@ -224,3 +224,35 @@ test('resampling keeps the ends and spaces the line evenly', () => {
   assert.ok(Math.abs(m.lengthMM - 40) < 1e-9);
   for (let i = 1; i < r.length; i++) assert.ok(Math.abs((m.s[i] - m.s[i - 1]) - 2) < 1e-9);
 });
+
+test('a creek drawn down a face stays on the surface: it follows the ground over the spurs instead of slicing through them', () => {
+  // A face falling to the south, ribbed with spurs and gullies across the
+  // line; the creek starts on the highest of them, as one running off a
+  // crest does.
+  const f = makeField(N, N, STEP);
+  fill(f, (x, y) => 20 + 0.3 * y + 14 * Math.sin(y / 10));
+  const planned = planChannels(c, { channels: [{ name: 'creek', widthMM: 12, depthMM: 4, path: [[100, 141], [100, 40]] }] }, f);
+  const [ch] = profileChannels(f, c, planned.channels);
+  assert.equal(ch.isGorge, false, 'starts at the top: it does not cross a ridge');
+  for (let i = 0; i < ch.depth.length; i++) assert.ok(ch.depth[i] <= 2 * 4 + 1e-6, `never more than twice its depth: ${ch.depth[i].toFixed(1)} at ${i}`);
+  // The same line forced to a gorge cuts through every spur.
+  const forced = profileChannels(f, c, planChannels(c, { channels: [{ widthMM: 12, depthMM: 4, mode: 'gorge', path: [[100, 141], [100, 40]] }] }, f).channels)[0];
+  assert.equal(forced.isGorge, true);
+  assert.ok(Math.max(...forced.depth) >= Math.max(...ch.depth) - 1e-9, 'and cuts at least as deep');
+  // Up to its free end, which shallows out to nothing as every channel's does.
+  for (let i = 1; i < forced.floor.length - 17; i++) assert.ok(forced.floor[i] <= forced.floor[i - 1] + 1e-9, 'its floor never rises');
+  let rises = false;
+  for (let i = 1; i < ch.floor.length; i++) if (ch.floor[i] > ch.floor[i - 1] + 0.05) rises = true;
+  assert.ok(rises, 'where the creek\'s does, over the spurs');
+});
+
+test('a line over a ridge between two lower ends is a gorge; told to be a creek, it rides over and says it ponds', () => {
+  const f = makeField(N, N, STEP);
+  fill(f, (x) => 30 + 25 * Math.exp(-(((x - 100) / 15) ** 2))); // a ridge across the line
+  const auto = profileChannels(f, c, planChannels(c, { channels: [{ widthMM: 20, depthMM: 6, path: [[30, 100], [170, 100]] }] }, f).channels)[0];
+  assert.equal(auto.isGorge, true);
+  assert.ok(auto.ridgeRiseMM > 20);
+  const creek = profileChannels(f, c, planChannels(c, { channels: [{ widthMM: 20, depthMM: 6, mode: 'surface', path: [[30, 100], [170, 100]] }] }, f).channels)[0];
+  assert.equal(creek.isGorge, false);
+  assert.ok(creek.climbMM > 5, `rides over the ridge, so the water ponds: ${creek.climbMM.toFixed(1)} mm`);
+});

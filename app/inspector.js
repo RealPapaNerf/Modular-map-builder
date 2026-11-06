@@ -180,8 +180,11 @@ function modulePanel(api) {
         set: (x, on) => { x.fountains = { ...(x.fountains || {}), auto: on }; },
         title: 'Where a channel starts, the pump has to put the water',
       }),
+      choose(api, 'Kind', { options: [['', 'chamber under a screened lid'], ['pool', 'open pool']], get: (x) => x.fountains?.kind, set: (x, v) => ops.setPath(x, 'fountains.kind', v), id: 'fountains.kind' }),
       num(api, 'Tube OD', { get: (x) => x.fountains?.tubeOdMM, set: (x, v) => ops.setPath(x, 'fountains.tubeOdMM', v), unit: 'mm', step: 0.1, min: 3, placeholder: String(FOUNTAIN_DEFAULTS.tubeOdMM) }),
+      num(api, 'Chamber', { get: (x) => x.fountains?.chamberRadiusMM, set: (x, v) => ops.setPath(x, 'fountains.chamberRadiusMM', v), unit: 'mm', step: 1, min: 10, placeholder: String(FOUNTAIN_DEFAULTS.chamberRadiusMM), id: 'fountains.chamberRadiusMM', title: 'The lid\'s radius. Wider holds more screen, and a screen that opens more than the tube\'s bore is what stops the squirting.' }),
       num(api, 'Pool', { get: (x) => x.fountains?.poolRadiusMM, set: (x, v) => ops.setPath(x, 'fountains.poolRadiusMM', v), unit: 'mm', step: 0.5, min: 5, placeholder: String(FOUNTAIN_DEFAULTS.poolRadiusMM) }),
+      h('p', { class: 'hint' }, 'A chamber is a room under the ground with a lid whose top is the ground, screened with holes: the jet hits the lid and the water wells out. A spring placed in a lake is the tube straight into it.'),
     ),
     group('Woods over the whole module', woodLayers(api)),
     group('Sides',
@@ -303,12 +306,15 @@ function channelPanel(api, sel) {
       seg('Width', WIDTHS.map((w) => [w, `${w}`]), ch.widthMM ?? CHANNEL_DEFAULTS.widthMM, (v) => api.commit((x) => { x.channels[i].widthMM = v; }, 'channel width'), { wide: true, id: 'channel.width' }),
       num(api, 'Width', { get: at('channels', i, 'widthMM'), set: put('channels', i, 'widthMM'), unit: 'mm', step: 1, min: 4, placeholder: String(CHANNEL_DEFAULTS.widthMM), id: 'channel.widthMM', title: 'Bank to bank. At the rim it is the port\'s width whatever this says.' }),
       num(api, 'Depth', { get: at('channels', i, 'depthMM'), set: put('channels', i, 'depthMM'), unit: 'mm', step: 0.5, min: 0.5, placeholder: String(s.channelDefaults?.depthMM ?? c.channelDepthMM), id: 'channel.depthMM', title: 'Below the ground along its line. The cross-section is a circular arc, a ) on its side; deeper than half the width it gets straight walls.' }),
+      seg('Kind', [['auto', 'auto'], ['surface', 'creek'], ['gorge', 'gorge']], ch.mode || 'auto', (v) => api.commit((x) => { if (v === 'auto') delete x.channels[i].mode; else x.channels[i].mode = v; }, 'channel kind'), { wide: true, id: 'channel.mode' }),
+      h('p', { class: 'hint' }, 'Auto: a line that crosses a ridge is cut as a gorge through it; any other runs as a creek down the surface, over the spurs.'),
       Array.isArray(ch.path) ? h('p', { class: 'hint' }, `${ch.path.length} points. Drag a point to move it, or the line to move the whole channel.`)
         : [h('p', { class: 'hint' }, 'No line of its own: the generator routes it down the valley the ice left, between its two ends.'),
           grown?.pts ? h('div', { class: 'row-btns' }, h('button', { type: 'button', 'data-field': 'channel.take', onclick: () => api.commit((x) => ops.takeLine(x, i, grown.pts), 'take the channel\'s line') }, 'Take the line it found'),
             h('span', { class: 'hint' }, 'so you can drag its points')) : null],
     ),
     grown ? group('As grown', facts([
+      ['Kind', grown.isGorge ? 'gorge' : 'creek on the surface'],
       ['Length', `${Math.round(grown.lengthMM)} mm`],
       ['Floor at the start', `${grown.startFloorMM.toFixed(1)} mm`],
       ['Floor at the end', `${grown.endFloorMM.toFixed(1)} mm`],
@@ -475,7 +481,8 @@ function springPanel(api, sel) {
   return [
     h('h2', {}, 'Spring'),
     h('p', { class: 'sub' }, `At ${sp.atMM.join(', ')} mm.`),
-    h('p', { class: 'hint' }, `A ${s.fountains?.tubeOdMM ?? FOUNTAIN_DEFAULTS.tubeOdMM} mm tube comes up through the module into a pool with one notch, so the water leaves at the rate it arrives instead of squirting.`),
+    choose(api, 'Kind', { options: [['', 'as the module'], ['chamber', 'chamber under a screened lid'], ['pool', 'open pool'], ['lake', 'into a lake']], get: (x) => x.fountains.place[i].kind, set: (x, v) => { if (v === undefined) delete x.fountains.place[i].kind; else x.fountains.place[i].kind = v; }, id: 'spring.kind' }),
+    h('p', { class: 'hint' }, `A ${s.fountains?.tubeOdMM ?? FOUNTAIN_DEFAULTS.tubeOdMM} mm tube comes up through the module. Under a chamber's lid the jet hits solid plastic and the water wells out through the screen; in a lake the lake takes it. Placed in standing water, it is always the tube into the lake.`),
     h('div', { class: 'row-btns' }, del('Delete spring', () => { api.commit((x) => { x.fountains.place.splice(i, 1); ops.tidy(x); }, 'delete a spring'); api.select(null); })),
   ];
 }

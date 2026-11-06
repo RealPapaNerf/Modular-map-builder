@@ -152,19 +152,29 @@ in `lib/contract.js` is that curve, and it is the one function both the rim
 profile and the carve use, so the channel a module cuts inland is the same
 curve it hands over at its edge.
 
-**The floor follows the ground, and never rises.** A 10 mm channel is 10 mm
-below the land along its line, with the ground smoothed along the line first
-so the bed does not inherit every bump. But water does not run uphill, so
-the floor is also held to the lowest it has been so far. A line drawn over
-high ground cuts a **gorge** through it, as deep as the rise is high, and the
-cross-section goes to walls. Where it meets a port it is eased onto that
-port's floor over about a width. It only ever *cuts*: across a hillside the
-uphill bank is the cut and the downhill bank is the hill. The report says
-what happened:
+**A gorge where it crosses a ridge, a creek everywhere else.** A channel is
+10 mm below the land along its line, with the ground smoothed along the line
+first so the bed does not inherit every bump. What happens at high ground
+depends on whether the line **crosses a ridge** -- rises over ground more
+than 8 mm above both of its ends:
+
+- **It does: a gorge.** Water does not run uphill, so the floor is held to
+  the lowest it has been so far and the channel cuts through the ridge, as
+  deep as the ridge is high, the cross-section going to walls.
+- **It does not: a creek on the surface.** A line drawn down a face follows
+  the ground. It cuts through a small bump, up to twice its depth, and rides
+  over anything bigger rather than slicing the mountain open; water ponds
+  behind a rise like that, and the report says so.
+
+The channel's inspector can set it outright: *auto*, *creek* or *gorge*
+(`mode` in the spec). Where it meets a port it is eased onto that port's
+floor over about a width. It only ever *cuts*: across a hillside the uphill
+bank is the cut and the downhill bank is the hill. The report says what
+happened:
 
 ```
-note — main runs through high ground on its line, so it is cut as a gorge there,
-up to 21.8 mm deeper than its 10 mm: water does not run uphill.
+note — main crosses a ridge, so it is cut as a gorge through it, up to 21.8 mm
+deeper than its 10 mm: water does not run uphill.
 note — main's line goes 2.1 mm below the floor of the S port before it gets there,
 so the water stands that deep behind the port before it spills out.
 ```
@@ -360,9 +370,23 @@ Everything that was already here still is, per module rather than per map.
 - **Standing water** (`lib/lake.js`): tarns in the hollows the ice left,
   lakes placed at a point or painted along a stroke, each a hole you can
   pour clear epoxy into, with the millilitres reported.
-- **Springs** (`lib/fountain.js`): a pool with a lip and one notch, and a
-  tube bore straight down through the module. `fountains.auto` puts one at
-  the start of every channel, which is where a pump has to put the water.
+- **Springs** (`lib/fountain.js`), placed by hand once you can see the
+  module, or at the start of every channel with `fountains.auto`. A tube
+  bore comes straight up through the module, and what it opens into is one
+  of three things:
+  - **A chamber under a screened lid**, the default, after relief. A room
+    is cut down into the ground, and a lid drops onto a ledge in it. The
+    lid's top is the ground that was there, so from above it is hillside
+    with water welling out of it. The lid is a screen of 2.2 mm holes that
+    together open twice the tube's bore, so the water leaves at half the
+    speed it arrived, and no hole is over the jet, which hits solid lid and
+    spreads. The lid is never thinner than 3 mm. It prints on its own
+    (`lids.stl`), flat side down, and lifts out so the chamber can be
+    resined and cleaned.
+  - **The tube straight into a lake**: a spring placed in standing water
+    is always this; the lake takes the jet.
+  - **An open pool** with a lip and one notch, as before (`kind: "pool"`).
+
   `build` writes a tray for the module to stand in.
 - **Woods** (`lib/canopy.js`): conifer spires and broadleaf cauliflower,
   placed and stamped, with a treeline in module millimetres. No tree ever

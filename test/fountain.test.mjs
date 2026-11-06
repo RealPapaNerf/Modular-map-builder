@@ -211,3 +211,40 @@ test('the tray is a closed tub the map can sit down into', () => {
   const heights = new Set(Array.from(t.field.values).map((v) => v.toFixed(3)));
   assert.ok(heights.size >= 3, `expected floor, ledge and wall, got ${heights.size} levels`);
 });
+
+test('a chamber is a room under a screened lid whose top is the ground; the screen opens twice the tube\'s bore and none of it is over the jet', async () => {
+  const { carveChamber, lidSolid, FOUNTAIN_DEFAULTS: FD } = await import('../lib/fountain.js');
+  const { meshMasked } = await import('../lib/mesh.js');
+  const f = makeField(201, 201, 1);
+  fill(f, (x) => 30 + 0.15 * x); // a hillside
+  const before = Float64Array.from(f.values);
+  const r = carveChamber(f, { atMM: [100, 100] });
+  assert.equal(r.kind, 'chamber');
+  assert.ok(r.openRatio >= 2, `opens ${r.openRatio.toFixed(2)}x the bore`);
+  const jet = FD.tubeIdMM / 2 + FD.jetClearMM;
+  for (const [hx, hy] of r.lid.holes) assert.ok(Math.hypot(hx, hy) >= jet + FD.holeMM / 2 - 1e-9, 'no hole over the jet');
+  // The lid is never thinner than asked, and its top is the ground that was there.
+  let thinnest = Infinity;
+  for (const v of r.lid.top) thinnest = Math.min(thinnest, v);
+  assert.ok(thinnest >= FD.capMM - 0.05, `thinnest ${thinnest.toFixed(2)}`);
+  const lid = lidSolid(r.lid, meshMasked);
+  const w = checkWatertight(lid);
+  assert.ok(w.watertight, `${w.unpaired} unpaired`);
+  // The hole only cuts, and the ledge is where the lid sits.
+  for (let k = 0; k < f.values.length; k++) assert.ok(f.values[k] <= before[k] + 1e-9);
+  const at = (x, y) => f.values[y * 201 + x];
+  assert.ok(Math.abs(at(100 + 16, 100) - r.ledgeMM) < 1e-9, 'the ledge, near the edge of the hole');
+  assert.ok(Math.abs(at(100, 100) - r.bedMM) < 1e-9, 'the floor of the room, under the lid');
+  // And the module with the tube's bore through it is a closed solid.
+  assert.ok(checkWatertight(meshTile(f, { bores: [r.bore] })).watertight);
+});
+
+test('a chamber is refused where there is no ground to roof it, or no room at the rim', async () => {
+  const { carveChamber } = await import('../lib/fountain.js');
+  const thin = makeField(201, 201, 1);
+  thin.values.fill(5);
+  assert.match(carveChamber(thin, { atMM: [100, 100] }).skipped, /not enough ground/);
+  const ok = makeField(201, 201, 1);
+  ok.values.fill(30);
+  assert.match(carveChamber(ok, { atMM: [8, 100] }).skipped, /rim/);
+});

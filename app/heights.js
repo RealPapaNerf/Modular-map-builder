@@ -36,7 +36,9 @@ const max = (a, b) => (Number.isNaN(a) ? b : Number.isNaN(b) ? a : a > b ? a : b
 export function tileHeights(t) {
   const { nx, ny, step } = t.local;
   const N = nx * ny;
-  const heights = Float32Array.from(t.local.values);
+  // With its lids in: a chamber is a hole in the print, but its lid is the
+  // ground that was there.
+  const heights = Float32Array.from((t.surface || t.local).values);
   const water = new Float32Array(N).fill(NaN);
   const kind = new Uint8Array(N);
   // Which lake each cell is under, as its index in the build's list plus
@@ -70,6 +72,8 @@ export function tileHeights(t) {
   // the lip -- never channel water, which would stand a ring of it above
   // the pool's own surface.
   for (const sp of t.springs || []) {
+    // A chamber shows its lid, which is ground; a tube into a lake shows the lake.
+    if (sp.kind === 'chamber' || sp.kind === 'lake') continue;
     if (!sp.atMM || !Number.isFinite(sp.spillMM) || !(sp.poolRadiusMM > 0)) continue;
     const ri = Math.round(sp.atMM[0] / step);
     const rj = Math.round(sp.atMM[1] / step);

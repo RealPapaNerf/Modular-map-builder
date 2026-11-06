@@ -49,7 +49,7 @@ export function summarise(result, { mode = 'build', spec = null } = {}) {
     channels: (t.channels || []).map((ch) => ({
       name: ch.name, from: ch.from, to: ch.to, routed: ch.routed, widthMM: ch.widthMM, depthMM: ch.depthMM, lengthMM: num(ch.lengthMM, 0),
       startFloorMM: num(ch.startFloorMM), endFloorMM: num(ch.endFloorMM), lowestFloorMM: num(ch.lowestFloorMM), climbMM: num(ch.climbMM),
-      pondMM: num(ch.pondMM), gorgeMM: num(ch.gorgeMM),
+      pondMM: num(ch.pondMM), gorgeMM: num(ch.gorgeMM), isGorge: !!ch.isGorge, mode: ch.mode || 'auto',
       // The line as grown, every few samples: enough to take over as a drawn path.
       pts: ch.pts.filter((_, k) => k % 4 === 0 || k === ch.pts.length - 1).map(([x, y]) => [Number(x.toFixed(1)), Number(y.toFixed(1))]),
     })),
@@ -66,7 +66,12 @@ export function summarise(result, { mode = 'build', spec = null } = {}) {
       },
     },
     springs: (t.springs || []).map((sp) => ({
+      kind: sp.kind || 'pool',
       atMM: sp.atMM.map((v) => num(v, 0)), bedMM: num(sp.bedMM), spillMM: num(sp.spillMM), boreMM: num(sp.bore.rMM * 2), tubeOdMM: sp.tubeOdMM,
+      ...(sp.lid ? {
+        lidMM: num(sp.lid.radiusMM * 2, 1), holes: sp.lid.holes.length, holeMM: sp.lid.holeMM, openRatio: num(sp.openRatio, 1),
+        lidThinMM: num(sp.lid.capMinMM, 1), lidThickMM: num(sp.lid.capMaxMM, 1), roomMM: num(sp.ledgeMM - sp.bedMM, 1),
+      } : {}),
     })),
     lakes: { byKind: lakesByKind, totalMl: num(lakes.reduce((a, l) => a + l.millilitres, 0), 1), top: lakes.slice(0, 8), all },
     lakesSkipped: (t.lakesSkipped || []).map((x) => ({ what: x.what, why: x.why })),

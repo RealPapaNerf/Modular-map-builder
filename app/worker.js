@@ -23,9 +23,9 @@ import { writeSTL } from '../lib/stl.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
 import { camSheet, camSolid, camSettings } from '../lib/cam.js';
 import { plateSolid, pinSheet, PLATE_HEIGHTS } from '../lib/plate.js';
-import { meshTile } from '../lib/mesh.js';
+import { meshTile, meshMasked } from '../lib/mesh.js';
 import { makeField } from '../lib/field.js';
-import { trayField } from '../lib/fountain.js';
+import { trayField, lidSheet } from '../lib/fountain.js';
 import { summarise } from './summary.js';
 import { makeZip } from './zip.js';
 import { tileHeights, transferables } from './heights.js';
@@ -63,6 +63,10 @@ function manifest() {
       make: () => writeSTL(camSheet(camSettings(result.joint), cams), 'lock cams'),
     });
     out.push({ id: 'cam-one', name: 'cam-one.stl', group: 'joinery', note: 'a single cam, for test-fitting', make: () => writeSTL(camSolid(camSettings(result.joint), Math.min(...cams)), 'lock cam') });
+  }
+  const lids = t.springs.filter((sp) => sp.lid).map((sp) => sp.lid);
+  if (lids.length) {
+    out.push({ id: 'lids', name: 'lids.stl', group: 'module', note: `${lids.length} chamber lid${lids.length > 1 ? 's' : ''}, printed flat side down`, make: () => writeSTL(lidSheet(lids, meshMasked), 'chamber lids') });
   }
   if (t.springs.length) {
     out.push({

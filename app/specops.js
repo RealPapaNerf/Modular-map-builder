@@ -355,13 +355,13 @@ export const KEY_ORDER = ['name', 'seed', 'meshMM', 'metresPerMM', 'marginMM', '
   'channels', 'channelDefaults', 'canopy', 'lakes', 'fountains', 'edits', 'joints', 'locks', 'plates', 'tray', 'contract'];
 
 const ORDERS = {
-  channels: ['name', 'widthMM', 'depthMM', 'from', 'to', 'path'],
+  channels: ['name', 'widthMM', 'depthMM', 'mode', 'from', 'to', 'path'],
   canopy: ['kind', 'crownMM', 'heightMM', 'density', 'spacingMM', 'minZMM', 'maxZMM', 'thinningMM', 'maxSlopeDeg', 'region'],
   volcanoes: ['at', 'heightMM', 'baseRadiusMM', 'craterRadiusMM', 'craterDepthMM', 'breachAzimuthDeg'],
   flats: ['at', 'radiusMM', 'elevMM'],
   lakes: ['fillHollows', 'depthMM', 'shoreMM', 'profile', 'place', 'resize'],
-  fountains: ['auto', 'tubeOdMM', 'poolRadiusMM', 'place'],
-  place: ['atMM', 'pathMM', 'radiusMM', 'depthMM'],
+  fountains: ['auto', 'kind', 'tubeOdMM', 'chamberRadiusMM', 'poolRadiusMM', 'place'],
+  place: ['atMM', 'kind', 'pathMM', 'radiusMM', 'depthMM'],
   contract: ['tileMM', 'edgeLandMM', 'edges', 'blends', 'portWidthMM', 'channelDepthMM'],
   sides: ['N', 'E', 'S', 'W'],
 };

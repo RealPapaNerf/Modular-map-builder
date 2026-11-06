@@ -39,12 +39,12 @@ export function reportHTML(r, elapsedMS) {
 
   /* channels */
   if (r.channels.length) {
-    out.push('<h3>Channels</h3><div class="scroll"><table><thead><tr><th>Channel</th><th>Ends</th><th>Width</th><th>Depth</th><th>Length</th><th>Floor</th><th>Gorge</th><th>Ponds</th></tr></thead><tbody>'
+    out.push('<h3>Channels</h3><div class="scroll"><table><thead><tr><th>Channel</th><th>Ends</th><th>Width</th><th>Depth</th><th>Length</th><th>Floor</th><th>Kind</th><th>Ponds</th></tr></thead><tbody>'
       + r.channels.map((ch) => `<tr><td><b>${esc(ch.name)}</b></td>`
         + `<td class="ports">${ch.from ? `in ${ch.from}` : 'inside'} → ${ch.to ? `out ${ch.to}` : 'inside'}${ch.routed ? ' (routed)' : ''}</td>`
         + `<td>${ch.widthMM} mm</td><td>${ch.depthMM} mm</td><td>${fmt(ch.lengthMM)} mm</td>`
         + `<td class="mono">${fmt(ch.startFloorMM, 1)} → ${fmt(ch.endFloorMM, 1)} (low ${fmt(ch.lowestFloorMM, 1)})</td>`
-        + `<td>${ch.gorgeMM > 0.5 ? `${fmt(ch.gorgeMM, 1)} mm deeper` : '—'}</td>`
+        + `<td>${ch.isGorge ? `gorge${ch.gorgeMM > 0.5 ? `, ${fmt(ch.gorgeMM, 1)} mm deeper` : ''}` : 'creek on the surface'}</td>`
         + `<td class="${ch.pondMM > 0.5 ? 'bad' : ''}">${ch.pondMM > 0.5 ? `${fmt(ch.pondMM, 1)} mm` : '—'}</td></tr>`).join('')
       + '</tbody></table></div>');
   }
@@ -76,9 +76,17 @@ export function reportHTML(r, elapsedMS) {
 
   /* fountain */
   if (r.springs.length) {
-    out.push('<h3>Springs</h3><div class="scroll"><table><thead><tr><th>At</th><th>Pool bed</th><th>Spills at</th><th>Bore</th></tr></thead><tbody>'
-      + r.springs.map((s) => `<tr><td class="mono">${s.atMM.join(', ')} mm</td><td>${fmt(s.bedMM, 1)} mm</td><td>${fmt(s.spillMM, 1)} mm</td><td>${fmt(s.boreMM, 1)} mm for ${s.tubeOdMM} mm tube</td></tr>`).join('')
+    const what = (s) => (s.kind === 'chamber'
+      ? `a chamber ${fmt(s.roomMM, 1)} mm deep under a ${fmt(s.lidMM, 0)} mm lid, ${fmt(s.lidThinMM, 1)}–${fmt(s.lidThickMM, 1)} mm thick, screened with ${s.holes} holes of ${s.holeMM} mm: ${fmt(s.openRatio, 1)}× the tube's bore`
+      : s.kind === 'lake' ? 'the tube straight into the lake: the lake takes the jet'
+        : `a pool, bed ${fmt(s.bedMM, 1)} mm, spilling at ${fmt(s.spillMM, 1)} mm`);
+    out.push('<h3>Springs</h3><div class="scroll"><table><thead><tr><th>At</th><th>What</th><th>Bore</th></tr></thead><tbody>'
+      + r.springs.map((s) => `<tr><td class="mono">${s.atMM.join(', ')} mm</td><td>${esc(what(s))}</td><td>${fmt(s.boreMM, 1)} mm for ${s.tubeOdMM} mm tube</td></tr>`).join('')
       + '</tbody></table></div>');
+    if (r.springs.some((s) => s.kind === 'chamber')) {
+      out.push('<p class="line">Each chamber\'s lid is printed on its own, flat side down, and drops onto the ledge in its hole; its top is the ground that was there. '
+        + 'The jet hits the solid middle of the lid and the water wells out through the screen. It lifts out, so the chamber can be resined and cleaned.</p>');
+    }
   }
 
   /* ice */

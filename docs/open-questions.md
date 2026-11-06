@@ -137,7 +137,14 @@ ridge that runs to a side to meet it as a cliff. All built:
   it.
 - **Springs are placed by hand** in the example, once the module has grown.
 
-Asked at the same time, next: springs as a buried chamber under a screened
-cap, as relief makes them, or a tube straight into a lake; and a channel
-that only cuts a gorge where it crosses a ridge, running down the surface of
-a face otherwise.
+Asked at the same time, and built after:
+
+- **Springs as a chamber under a screened lid**, as relief makes them: a
+  room cut into the ground, a lift-out lid whose top is the ground, its
+  screen opening twice the tube's bore and solid over the jet. A spring
+  placed in a lake is the tube straight into the lake. The open pool is
+  still there as `kind: "pool"`.
+- **A gorge only where a channel crosses a ridge.** A line that rises over
+  ground well above both of its ends is cut as a gorge; any other is a creek
+  that follows the surface down the face. Each channel can be set to auto,
+  creek or gorge.
