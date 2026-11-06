@@ -99,6 +99,10 @@ async function drag(points, { steps = 6 } = {}) {
 const tool = async (id) => { await page.click(`[data-tool="${id}"]`); };
 const chip = async (v) => { await page.click(`[data-chip="${v}"]`); };
 async function field(id, value) {
+  // The inspector is re-rendered on the next animation frame after every
+  // change. Filling an input that frame is about to replace loses the value,
+  // so let it settle first.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const f = page.locator(`#inspector [data-field="${id}"]`).first();
   if (await f.evaluate((e) => e.tagName) === 'SELECT') await f.selectOption(String(value));
   else {
@@ -145,9 +149,23 @@ await step('the module\'s numbers go in through the inspector', async () => {
   await field('Ridge width', 95);
   await field('Cycles', 30);
   await field('Snowline swing', 18);
-  await field('Rim', 22);
-  const s = await spec();
+  await field('Default rim', 22);
+  let s = await spec();
   assert.deepEqual(s.contract, { tileMM: 200, edgeLandMM: 22, portWidthMM: 30, channelDepthMM: 10 });
+  // A side's class is a chip; the default class writes nothing.
+  await page.click('#inspector [data-field="side.N.class"] button >> text="40"');
+  await page.waitForTimeout(60);
+  s = await spec();
+  assert.deepEqual(s.contract.edges, { N: 42 }, 'the north side is class 40: a 42 mm rim');
+  await page.click('#inspector [data-field="side.N.blend"] button >> text="cliff"');
+  await page.waitForTimeout(60);
+  assert.deepEqual((await spec()).contract.blends, { N: 6 });
+  await page.click('#inspector [data-field="side.N.blend"] button >> text="slope"');
+  await page.click('#inspector [data-field="side.N.class"] button >> text="20"');
+  await page.waitForTimeout(60);
+  s = await spec();
+  assert.equal(s.contract.edges, undefined);
+  assert.equal(s.contract.blends, undefined);
   assert.deepEqual(s.glacier, { cycles: 30, elaSwingMM: 18 });
   assert.equal(s.spineWidthMM, 95);
 });
@@ -222,7 +240,9 @@ await step('DONE WHEN: the spec drawn from an empty module is the example, and t
   assert.equal(await page.locator('#drawer').isHidden(), true, 'the JSON drawer stayed shut');
   const s = await spec();
   s.meshMM = 0.9;
-  assert.deepEqual(canonical(s), canonical(structuredClone(EXAMPLE_SPEC)));
+  const a = canonical(s);
+  const b = canonical(structuredClone(EXAMPLE_SPEC));
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) assert.deepEqual(a[k], b[k], `spec.${k}`);
 });
 
 await step('a lake painted with the mouse is written along its stroke; undo takes it off', async () => {
@@ -333,10 +353,34 @@ await step('the report says the module mates and offers its files', async () => 
   await page.waitForFunction(() => !window.mmb.state.busy, null, { timeout: 120000 });
   await page.waitForTimeout(300);
   const text = await page.locator('#sheet').innerText();
-  assert.match(text, /it mates with any module built to this contract/);
+  assert.match(text, /each side mates flush with any side of its class/);
   assert.match(text, /m remains/);
+  assert.match(text, /cam lock/i);
   assert.ok(await page.locator('#sheet button[data-id="module"]').count(), 'the module\'s STL');
   assert.ok(await page.locator('#sheet button[data-id="keys"]').count(), 'and its keys');
+  assert.ok(await page.locator('#sheet button[data-id="cams"]').count(), 'and its cams');
+  assert.ok(await page.locator('#sheet button[data-id="plate-20"]').count(), 'and the spacer plates, if wanted');
+  assert.ok(await page.locator('#sheet button[data-id="pins"]').count(), 'and their pins');
+});
+
+await step('a grown lake can be selected, measured, and made another size', async () => {
+  const lakes = await page.evaluate(() => window.mmb.state.grown.report.lakes.all);
+  const i = lakes.findIndex((l) => l.what === 'tarn' && l.shape);
+  if (i < 0) { console.log('  (no tarn in this build to resize; skipped)'); return; }
+  await page.evaluate(() => window.mmb.setStage('draw'));
+  await page.evaluate((index) => window.mmb.api.select({ type: 'water', index }), i);
+  await page.waitForTimeout(100);
+  const text = await page.locator('#inspector').innerText();
+  assert.match(text, /Tarn/);
+  assert.match(text, new RegExp(`${lakes[i].shape.lengthMM} mm`));
+  await field('water.widthMM', 12);
+  const s = await spec();
+  assert.equal(s.lakes.resize.length, 1);
+  assert.equal(s.lakes.resize[0].widthMM, 12);
+  await page.locator('#canvas').focus();
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(100);
+  assert.equal((await spec()).lakes.resize, undefined, 'undo takes it off');
 });
 
 await step('an old board spec is refused with a sentence, not opened', async () => {

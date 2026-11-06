@@ -22,6 +22,7 @@ import { DRAW_TOOLS, DRAW_GROUPS, REFINE_TOOLS, REFINE_GROUPS } from './tools.js
 import { applyGroundEdits, editsFor, GROUND_OPS, EDIT_DEFAULTS } from '../lib/edits.js';
 import { renderInspector } from './inspector.js';
 import { reportHTML, downloadsHTML, fmt, bytes } from './report.js';
+import { lakeAt } from './heights.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -101,6 +102,7 @@ function validateSelection() {
       case 'lake': return !!sp.lakes?.place?.[s.index];
       case 'springpoint': return !!sp.fountains?.place?.[s.index];
       case 'wood': return !!sp.canopy?.[s.index];
+      case 'water': return !!state.grown?.report?.lakes?.all?.[s.index];
       default: return false;
     }
   })();
@@ -507,8 +509,11 @@ function hover3d(hit, px, py, dragging) {
   el.readout.textContent = hit.kind === 'tile' ? `${hit.z.toFixed(1)} mm up  ·  x ${hit.x.toFixed(0)}  y ${hit.y.toFixed(0)} mm` : '';
 }
 
-function pick3d() {
-  select(null);
+function pick3d(hit) {
+  // A click on water selects that lake, so its size can be seen and changed.
+  const h = state.grown?.tile3d?.tile;
+  const li = hit && h ? lakeAt(h, hit.x, hit.y) : -1;
+  select(li >= 0 && state.grown?.report?.lakes?.all?.[li] ? { type: 'water', index: li } : null);
 }
 
 /* ------------------------------------------------------------------- api */

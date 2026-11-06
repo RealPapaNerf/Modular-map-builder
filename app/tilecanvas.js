@@ -7,7 +7,7 @@
 // the hillshade -- the estimate before anything has grown, the grown module
 // after.
 
-import { EDGES } from '../lib/contract.js';
+import { EDGES, classOf, edgeLand, portFloorAt } from '../lib/contract.js';
 import { roundRect, pill } from './view.js';
 import { dims, contractOf } from './specops.js';
 import { drawGround, drawChannels, drawTileFeatures, handles } from './features.js';
@@ -117,7 +117,7 @@ export function drawTile(ctx, st, cam, th) {
     if (size > 260) {
       const dx = e === 'E' ? 1 : e === 'W' ? -1 : 0;
       const dy = e === 'N' ? 1 : e === 'S' ? -1 : 0;
-      const label = on ? `channel ${c.portWidthMM}@${Math.round(c.edgeLandMM - c.channelDepthMM)}` : `port ${e}`;
+      const label = on ? `class ${classOf(c, e)} · channel at ${portFloorAt(c, e)}` : `class ${classOf(c, e)} · rim ${edgeLand(c, e)}`;
       pill(ctx, cam.sx(m.x + dx * 24) + (dx ? dx * 20 : 0), cam.sy(m.y + dy * 14) - (dy ? dy * 4 : 0), label,
         { fill: th.panel, stroke: on ? th.water : th.ghost, ink: on ? th.ink : th.dim, font: '500 10px ui-monospace, Menlo, monospace' });
     }

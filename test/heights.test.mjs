@@ -7,7 +7,7 @@ import { makeField } from '../lib/field.js';
 import { buildTile } from '../lib/build.js';
 import {
   tileHeights, transferables, waterSurface, groundArrays, gridIndex, wallArrays, rimLine, waterArrays,
-  proxyArrays, sampleHeight, groundColour, heightSpan, lockBandArrays, GROUND, RIVER, STILL, WOOD,
+  proxyArrays, sampleHeight, groundColour, heightSpan, lockBandArrays, GROUND, RIVER, STILL, WOOD, lakeAt,
 } from '../app/heights.js';
 
 /** A 5 x 5 module, 200 mm across. */
@@ -51,8 +51,11 @@ test('a built module crosses the boundary as Float32 heights, its water and what
   assert.equal(h.kind[7], RIVER, 'a crown never turns a channel cell into wood');
   assert.equal(h.kind[24], GROUND);
   const buffers = transferables(h);
-  assert.equal(buffers.length, 3);
+  assert.equal(buffers.length, 4, 'heights, water, kind, and which lake');
   assert.ok(buffers.every((b) => b instanceof ArrayBuffer));
+  // A click on the lake finds it; one on dry ground finds none.
+  assert.equal(lakeAt(h, 1 * h.step, 1 * h.step), 0, 'the lake at cell 6 is the build\'s first lake');
+  assert.equal(lakeAt(h, 4 * h.step, 4 * h.step), -1);
 });
 
 test('every cell of the build\'s pool disc is pool or lip, never channel water', () => {

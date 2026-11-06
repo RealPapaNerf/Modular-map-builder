@@ -34,6 +34,7 @@ function dragHandle(api, h, e) {
   api.begin();
   const g = { kind: 'handle', h, start, moved: false };
   g.move = (e2) => {
+    if (h.fixed) return;
     const p = snap(e2.pt, e2.ev);
     g.moved = g.moved || Math.hypot(e2.px - e.px, e2.py - e.py) > 3;
     if (!g.moved) return;
@@ -74,6 +75,7 @@ function selectionFor(h) {
     case 'springpoint': return { type: 'springpoint', index: h.index };
     case 'wood': case 'wood-vertex': return { type: 'wood', index: h.index };
     case 'channel': case 'channel-vertex': return { type: 'channel', index: h.index };
+    case 'water': return { type: 'water', index: h.index };
     default: return null;
   }
 }

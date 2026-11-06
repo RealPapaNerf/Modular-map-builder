@@ -39,6 +39,9 @@ export function tileHeights(t) {
   const heights = Float32Array.from(t.local.values);
   const water = new Float32Array(N).fill(NaN);
   const kind = new Uint8Array(N);
+  // Which lake each cell is under, as its index in the build's list plus
+  // one; 0 is no lake. What a click on the water is looked up in.
+  const lake = new Uint16Array(N);
 
   // The channels: their water at the level the carve set, cell by cell.
   if (t.water) {
@@ -52,14 +55,15 @@ export function tileHeights(t) {
   }
 
   // Every lake carries its own cells and its own flat surface.
-  for (const l of t.lakes || []) {
-    if (!l.wet || !Number.isFinite(l.surfaceZ)) continue;
+  (t.lakes || []).forEach((l, li) => {
+    if (!l.wet || !Number.isFinite(l.surfaceZ)) return;
     for (let k = 0; k < N; k++) {
       if (!l.wet[k]) continue;
       kind[k] = STILL;
       water[k] = max(water[k], l.surfaceZ);
+      lake[k] = li + 1;
     }
-  }
+  });
 
   // A spring pool fills to the notch in its lip and no higher. Every cell
   // of its disc is decided here: under the spill it is the pool, over it
@@ -90,11 +94,20 @@ export function tileHeights(t) {
     for (let k = 0; k < N; k++) if (w.mask[k] && kind[k] === GROUND) kind[k] = WOOD;
   }
 
-  return { id: 'module', nx, ny, step, heights, water, kind };
+  return { id: 'module', nx, ny, step, heights, water, kind, lake };
 }
 
 /** The buffers in a tileHeights result, for postMessage's transfer list. */
-export const transferables = (h) => [h.heights.buffer, h.water.buffer, h.kind.buffer];
+export const transferables = (h) => [h.heights.buffer, h.water.buffer, h.kind.buffer, ...(h.lake ? [h.lake.buffer] : [])];
+
+/** Which lake (its index in the build's list) is at (x, y) mm, or -1. */
+export function lakeAt(h, x, y) {
+  if (!h?.lake) return -1;
+  const i = Math.round(x / h.step);
+  const j = Math.round(y / h.step);
+  if (i < 0 || j < 0 || i >= h.nx || j >= h.ny) return -1;
+  return h.lake[j * h.nx + i] - 1;
+}
 
 /**
  * Where the water stands, per vertex, NaN where it is dry: the module's

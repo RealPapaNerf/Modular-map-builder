@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeField, fill } from '../lib/field.js';
-import { makeContract, portFloor, channelShape } from '../lib/contract.js';
+import { makeContract, portFloor, portFloorAt, channelShape, grooveDepthAt } from '../lib/contract.js';
 import { valleyPath, meanderPath, snapToPorts, planChannels, profileChannels, carveChannels, portPoint, resample, measure, springOnChannel } from '../lib/channel.js';
-import { conformToContract, verifyEdges } from '../lib/tile.js';
+import { conformToContract, verifyEdges, cutSeamGrooves } from '../lib/tile.js';
 
 const c = makeContract();
 const N = 201;
@@ -132,15 +132,21 @@ test('where it crosses the rim a channel is the port: the contract\'s floor, wid
   const spec = { channels: [{ name: 'c', widthMM: 50, depthMM: 15, path: [[100, 200], [100, 0]] }] };
   const planned = planChannels(c, spec, f);
   assert.deepEqual(planned.ports, { N: true, E: false, S: true, W: false });
-  conformToContract(f, c, planned.ports);
+  conformToContract(f, c, {});
   profileChannels(f, c, planned.channels);
   carveChannels(f, c, planned.channels);
   conformToContract(f, c, planned.ports);
+  assert.ok(verifyEdges(f, c, planned.ports, { grooves: false }).worst < 1e-6, 'leaned onto the profile');
+  cutSeamGrooves(f, c, planned.ports);
   const e = verifyEdges(f, c, planned.ports);
   assert.ok(e.worst < 1e-6, `edge error ${e.worst}`);
   const mid = Math.round(100 / STEP);
-  assert.ok(Math.abs(f.values[(N - 1) * N + mid] - portFloor(c)) < 1e-6, 'the north port floor');
-  assert.ok(Math.abs(f.values[mid] - portFloor(c)) < 1e-6, 'the south port floor');
+  const groove = grooveDepthAt(c, 'N');
+  assert.ok(groove > 0.5, 'there is a silicone rebate');
+  assert.ok(Math.abs(f.values[(N - 1) * N + mid] - (portFloor(c) - groove)) < 1e-6, 'the north port floor, rebated for the silicone at the seam');
+  assert.ok(Math.abs(f.values[mid] - (portFloor(c) - groove)) < 1e-6, 'the south port floor, rebated');
+  const inRow = Math.ceil(c.grooveWidthMM / STEP) + 1;
+  assert.ok(Math.abs(f.values[inRow * N + mid] - portFloor(c)) < 0.3, `past the rebate the bed is the port floor, beginning to fall inland: ${f.values[inRow * N + mid].toFixed(3)}`);
   assert.equal(f.values[(N - 1) * N + mid + Math.round(16 / STEP)], c.edgeLandMM, 'and 16 mm along the rim it is land, whatever the channel is inland');
   // Inland the channel is its own width and depth.
   const ch = planned.channels[0];
@@ -149,15 +155,48 @@ test('where it crosses the rim a channel is the port: the contract\'s floor, wid
   assert.ok(Math.abs(ch.depth[k] - 15) < 1e-9);
 });
 
-test('the floor follows the ground, smoothed, and a channel drawn over a rise is reported as climbing', () => {
+test('the floor never rises: drawn over a rise, a channel cuts a gorge through it instead of climbing', () => {
   const f = makeField(N, N, STEP);
   fill(f, (x) => 30 + 10 * Math.exp(-(((x - 100) / 20) ** 2))); // a hump across the middle
   const planned = planChannels(c, { channels: [{ widthMM: 20, depthMM: 6, path: [[40, 100], [160, 100]] }] }, f);
   const [ch] = profileChannels(f, c, planned.channels);
-  assert.ok(ch.climbMM > 3, `it climbs the hump: ${ch.climbMM.toFixed(1)} mm`);
-  assert.ok(ch.lowestFloorMM < ch.floor[Math.floor(ch.pts.length / 2)], 'and is lowest off the hump');
+  assert.ok(ch.climbMM < 1e-9, `the floor does not climb the hump: ${ch.climbMM.toFixed(2)} mm`);
+  // Up to the free end, which shallows out to nothing over a port width or so.
+  for (let i = 1; i < ch.floor.length - 17; i++) assert.ok(ch.floor[i] <= ch.floor[i - 1] + 1e-9, `the floor rose at sample ${i}`);
+  const k = Math.floor(ch.pts.length / 2);
+  assert.ok(ch.gorgeMM > 7, `through the hump it is a gorge, ${ch.gorgeMM.toFixed(1)} mm deeper than drawn`);
+  assert.ok(ch.depth[k] > 13, `and the cross-section there is as deep as the hump is high: ${ch.depth[k].toFixed(1)} mm`);
+  carveChannels(f, c, planned.channels);
+  assert.ok(at(f, 100, 100) < 25, `the thalweg through the hump is below the ground either side of it: ${at(f, 100, 100).toFixed(1)}`);
   const flatOne = profileChannels(plain(40), c, planChannels(c, { channels: [{ widthMM: 20, depthMM: 6, path: [[40, 100], [160, 100]] }] }, plain(40)).channels)[0];
-  assert.ok(flatOne.climbMM < 1e-9, 'on the flat it does not climb');
+  assert.ok(flatOne.gorgeMM < 1e-9, 'on the flat it is just a channel');
+});
+
+test('a channel into a port on a lower-class side falls to it; one whose line has already gone below the port floor ponds behind it, and that is said', () => {
+  const cc = makeContract({ edges: { N: 32, S: 12 } });
+  // Level ground 20 mm up, in at the north (floor 22) and out at the south (floor 2).
+  const f = plain(20);
+  const planned = planChannels(cc, { channels: [{ name: 'down', widthMM: 30, depthMM: 10, path: [[100, 200], [100, 0]] }] }, f);
+  conformToContract(f, cc, {}); // as cutTile leaves it: land on every side
+  const [ch] = profileChannels(f, cc, planned.channels);
+  assert.ok(Math.abs(ch.startFloorMM - portFloorAt(cc, 'N')) < 1e-6, 'it starts on the north port floor');
+  assert.ok(Math.abs(ch.endFloorMM - portFloorAt(cc, 'S')) < 1e-6, 'and ends on the south port floor');
+  assert.ok(ch.pondMM < 1e-9, 'with nothing to pond behind');
+  assert.ok(!planned.notes.some((n) => /no fall|climb/.test(n.message)));
+  // The other way: in at the low side, out at the high side is said to have no fall.
+  const up = planChannels(cc, { channels: [{ name: 'up', path: [[100, 0], [100, 200]] }] }, plain(20));
+  assert.ok(up.notes.some((n) => /would have to climb/.test(n.message)), JSON.stringify(up.notes));
+  const level = planChannels(makeContract(), { channels: [{ name: 'flat', path: [[100, 0], [100, 200]] }] }, plain(20));
+  assert.ok(level.notes.some((n) => /no fall/.test(n.message)));
+  // Ponding: a deep trough along the line, below the exit port's floor.
+  const hi = makeContract({ edges: { N: 52, S: 32 } });
+  const g = makeField(N, N, STEP);
+  fill(g, (x, y) => (y > 50 && y < 130 ? 12 : 42));
+  const p2 = planChannels(hi, { channels: [{ name: 'trough', widthMM: 30, depthMM: 10, path: [[100, 200], [100, 0]] }] }, g);
+  conformToContract(g, hi, {});
+  const [t] = profileChannels(g, hi, p2.channels);
+  assert.ok(t.pondMM > 5, `the bed has to come back up to the port: ponds ${t.pondMM.toFixed(1)} mm`);
+  assert.ok(Math.abs(t.endFloorMM - portFloorAt(hi, 'S')) < 1e-6, 'but the port itself is still on the contract');
 });
 
 test('two channels on one side share the port, and that is said', () => {

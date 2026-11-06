@@ -20,7 +20,9 @@ export function reportHTML(r, elapsedMS) {
   const t = r.totals;
   const out = [];
 
-  out.push(`<p class="line">A ${c.tileMM} mm module, rim ${c.edgeLandMM} mm high, ports ${c.portWidthMM} mm wide with their floor at ${fmt(c.portFloorMM, 0)} mm. `
+  const cls = c.classes ? Object.entries(c.classes).map(([e, k]) => `${SIDE[e]} ${k}`).join(', ') : `all ${c.edgeLandMM - 2}`;
+  out.push(`<p class="line">A ${c.tileMM} mm module; edge classes ${esc(cls)}. Ports ${c.portWidthMM} mm wide in the middle of a side, `
+    + `rebated ${fmt(c.grooveDepthMM, 1)} mm for silicone over the last ${fmt(c.grooveWidthMM, 0)} mm. `
     + `Grown in ${(elapsedMS / 1000).toFixed(1)}s${r.mode === 'check' ? ', ice off' : ''}.</p>`);
 
   out.push(msgList(r.contractNotes.filter((n) => n.severity === 'error').map((n) => n.message), 'error'));
@@ -30,28 +32,33 @@ export function reportHTML(r, elapsedMS) {
   out.push(msgList(r.notes, 'note'));
 
   /* edges */
-  out.push('<h3>Edges</h3><div class="scroll"><table><thead><tr><th>Side</th><th>Mates with</th><th>Error</th></tr></thead><tbody>'
-    + Object.entries(r.edges).map(([e, x]) => `<tr><td><b>${SIDE[e]}</b></td><td class="ports">${esc(x.signature)}</td><td class="mono ${x.errMM > 1e-6 ? 'bad' : 'good'}">${fmt(x.errMM, 4)} mm</td></tr>`).join('')
+  out.push('<h3>Edges</h3><div class="scroll"><table><thead><tr><th>Side</th><th>Class</th><th>Mates with</th><th>Error</th></tr></thead><tbody>'
+    + Object.entries(r.edges).map(([e, x]) => `<tr><td><b>${SIDE[e]}</b></td><td>${x.classMM ?? '—'}</td><td class="ports">${esc(x.signature)}</td><td class="mono ${x.errMM > 1e-6 ? 'bad' : 'good'}">${fmt(x.errMM, 4)} mm</td></tr>`).join('')
     + '</tbody></table></div>'
-    + `<p class="line">Worst edge error ${fmt(r.worstEdgeMM, 4)} mm${r.worstEdgeMM < 1e-6 ? ': it mates with any module built to this contract.' : ': it does NOT mate.'}</p>`);
+    + `<p class="line">Worst edge error ${fmt(r.worstEdgeMM, 4)} mm${r.worstEdgeMM < 1e-6 ? ': each side mates flush with any side of its class.' : ': it does NOT mate.'}</p>`);
 
   /* channels */
   if (r.channels.length) {
-    out.push('<h3>Channels</h3><div class="scroll"><table><thead><tr><th>Channel</th><th>Ends</th><th>Width</th><th>Depth</th><th>Length</th><th>Floor</th><th>Climbs</th></tr></thead><tbody>'
+    out.push('<h3>Channels</h3><div class="scroll"><table><thead><tr><th>Channel</th><th>Ends</th><th>Width</th><th>Depth</th><th>Length</th><th>Floor</th><th>Gorge</th><th>Ponds</th></tr></thead><tbody>'
       + r.channels.map((ch) => `<tr><td><b>${esc(ch.name)}</b></td>`
         + `<td class="ports">${ch.from ? `in ${ch.from}` : 'inside'} → ${ch.to ? `out ${ch.to}` : 'inside'}${ch.routed ? ' (routed)' : ''}</td>`
         + `<td>${ch.widthMM} mm</td><td>${ch.depthMM} mm</td><td>${fmt(ch.lengthMM)} mm</td>`
         + `<td class="mono">${fmt(ch.startFloorMM, 1)} → ${fmt(ch.endFloorMM, 1)} (low ${fmt(ch.lowestFloorMM, 1)})</td>`
-        + `<td class="${ch.climbMM > 0.5 ? 'bad' : ''}">${ch.climbMM > 0.5 ? `${fmt(ch.climbMM, 1)} mm` : '—'}</td></tr>`).join('')
+        + `<td>${ch.gorgeMM > 0.5 ? `${fmt(ch.gorgeMM, 1)} mm deeper` : '—'}</td>`
+        + `<td class="${ch.pondMM > 0.5 ? 'bad' : ''}">${ch.pondMM > 0.5 ? `${fmt(ch.pondMM, 1)} mm` : '—'}</td></tr>`).join('')
       + '</tbody></table></div>');
   }
 
-  /* keys */
+  /* the lock */
   const k = r.keys;
   if (k.placed || k.refused.length) {
-    out.push(`<h3>Seam keys</h3><p class="line">${k.placed} recess(es) cut in the underside, <b>print ${k.usable} key${k.usable === 1 ? '' : 's'}</b>: `
-      + `${k.joint.padMM} mm pad on a ${k.joint.neckMM} mm neck, ${k.joint.depthMM} mm deep, ${k.joint.clearanceMM} mm slip fit, not glued. `
-      + 'The other half of each is in whatever module sits against that side.</p>');
+    const cams = k.cams || [];
+    out.push(`<h3>Cam lock</h3><p class="line">${cams.length} cam housing${cams.length === 1 ? '' : 's'} and ${k.usable} key pocket${k.usable === 1 ? '' : 's'}, `
+      + `one of each a side, ${k.joint.offsetMM} mm either side of the port; ${k.sockets} corner socket${k.sockets === 1 ? '' : 's'} for a spacer plate's studs. `
+      + `<b>Print ${k.usable} key${k.usable === 1 ? '' : 's'} and ${cams.length} cam${cams.length === 1 ? '' : 's'}</b>`
+      + `${k.camHeights.length ? ` (${k.camHeights.map((h) => `${fmt(h, 0)} mm`).join(', ')} tall, the height of their rims)` : ''}. `
+      + `Lay the keys on the table, lower the modules over them, drop each cam in slot-to-seam and turn it a quarter turn with a coin: `
+      + `it draws ${fmt(k.joint.drawMM, 1)} mm and pulls the faces together.</p>`);
     if (k.refused.length) out.push(msgList(k.refused.map((x) => `${x.id} left out: ${x.why}`), 'note'));
   }
 
@@ -59,8 +66,9 @@ export function reportHTML(r, elapsedMS) {
   if (r.lakes.totalMl) {
     const byKind = Object.entries(r.lakes.byKind).map(([kk, v]) => `${v} ${kk}${v > 1 ? 's' : ''}`).join(', ');
     out.push(`<h3>Standing water</h3><p class="line">${esc(byKind)}, ${fmt(r.lakes.totalMl, 1)} ml of epoxy in all.</p>`
-      + '<div class="scroll"><table><thead><tr><th>What</th><th>Area</th><th>Deepest</th><th>Epoxy</th></tr></thead><tbody>'
-      + r.lakes.top.map((l) => `<tr><td><b>${esc(l.what)}</b></td><td>${fmt(l.areaMM2)} mm²</td><td>${fmt(l.deepestMM, 1)} mm</td><td>${fmt(l.millilitres, 2)} ml</td></tr>`).join('')
+      + '<div class="scroll"><table><thead><tr><th>What</th><th>Size</th><th>Area</th><th>Deepest</th><th>Epoxy</th></tr></thead><tbody>'
+      + r.lakes.top.map((l) => `<tr><td><b>${esc(l.what)}</b>${l.resizeIndex != null ? ' (resized)' : ''}</td>`
+        + `<td>${l.shape ? `${fmt(l.shape.lengthMM)} × ${fmt(l.shape.widthMM)} mm` : '—'}</td><td>${fmt(l.areaMM2)} mm²</td><td>${fmt(l.deepestMM, 1)} mm</td><td>${fmt(l.millilitres, 2)} ml</td></tr>`).join('')
       + '</tbody></table></div>');
   }
   if (r.lakesSkipped.length) out.push(msgList(r.lakesSkipped.map((s) => `${s.what} not carved — ${s.why}`), 'note'));
@@ -94,7 +102,7 @@ export function reportHTML(r, elapsedMS) {
   return out.filter(Boolean).join('');
 }
 
-const GROUPS = [['module', 'The module'], ['joinery', 'Keys and tray']];
+const GROUPS = [['module', 'The module'], ['joinery', 'Keys, cams and tray'], ['plates', 'Spacer plates (any you want)']];
 
 export function downloadsHTML(r, files) {
   if (r.errors.length) return '<p class="hint">Not offering STLs while the contract is broken — fix the errors in the report first.</p>';
@@ -107,6 +115,7 @@ export function downloadsHTML(r, files) {
       + mine.map((f) => `<button type="button" class="dl" data-id="${esc(f.id)}"><b>${esc(f.name)}</b><span>${esc(f.note)}</span></button>`).join('')
       + '</div></div>');
   }
-  if (files.length > 1) html.push(`<div class="dl-grid"><button type="button" class="dl primary" data-zip="1"><b>Everything as a ZIP</b><span>${files.length} files</span></button></div>`);
+  const zipped = files.filter((f) => f.group !== 'plates').length;
+  if (zipped > 1) html.push(`<div class="dl-grid"><button type="button" class="dl primary" data-zip="1"><b>The module's files as a ZIP</b><span>${zipped} files, plates not included</span></button></div>`);
   return note + html.join('');
 }

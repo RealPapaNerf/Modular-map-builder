@@ -178,3 +178,35 @@ test('tidy drops empty lists and a ridge of one point, and a blank module is a m
   const d = ops.describe(ops.blankSpec());
   assert.match(d.sentences[0].text, /no channels/i);
 });
+
+test('a side\'s class and how it meets its rim are written into the contract, and the default class is no entry at all', () => {
+  const s = ops.blankSpec();
+  ops.setEdgeClass(s, 'N', 40);
+  ops.setEdgeClass(s, 'S', 10);
+  assert.deepEqual(s.contract.edges, { N: 42, S: 12 });
+  ops.setEdgeClass(s, 'N', 20);
+  assert.deepEqual(s.contract.edges, { S: 12 }, 'class 20 is the default: written as nothing');
+  ops.setEdgeBlend(s, 'E', 6);
+  assert.deepEqual(s.contract.blends, { E: 6 });
+  ops.setEdgeBlend(s, 'E', undefined);
+  ops.setEdgeClass(s, 'S', 20);
+  assert.equal(s.contract, undefined, 'and a contract with nothing left in it goes');
+  const say = ops.describe({ ...ops.blankSpec(), contract: { edges: { S: 32 } }, channels: [{ path: [[100, 200], [100, 0]] }] });
+  assert.ok(say.notes.some((n) => /would have to climb/.test(n.message)), 'in at a lower class than out is said before it grows');
+});
+
+test('a grown lake is resized by writing its size at its middle; again replaces, fill and back-to-as-dug do what they say', () => {
+  const s = ops.blankSpec();
+  const lake = { shape: { atMM: [100.04, 80], lengthMM: 150, widthMM: 70 }, resizeIndex: null };
+  assert.equal(ops.resizeLake(s, lake, { lengthMM: 40, widthMM: 30 }), 0);
+  assert.deepEqual(s.lakes.resize, [{ atMM: [100, 80], lengthMM: 40, widthMM: 30 }]);
+  ops.resizeLake(s, { ...lake, resizeIndex: 0 }, { lengthMM: 50, widthMM: 30 });
+  assert.equal(s.lakes.resize.length, 1, 'replaced, not stacked');
+  ops.resizeLake(s, lake, { lengthMM: 50, widthMM: 20 });
+  assert.equal(s.lakes.resize.length, 1, 'and a second change before it has grown again finds the first by where it is');
+  assert.equal(s.lakes.resize[0].lengthMM, 50);
+  ops.fillLake(s, { ...lake, resizeIndex: 0 });
+  assert.deepEqual(s.lakes.resize, [{ atMM: [100, 80], fill: true }]);
+  ops.unresizeLake(s, 0);
+  assert.equal(s.lakes.resize, undefined);
+});

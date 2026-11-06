@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeContract, edgeProfile, tileEdgeProfile, edgeSignature, channelShape, portFloor, check, DEFAULTS, EDGES } from '../lib/contract.js';
+import { makeContract, edgeProfile, tileEdgeProfile, edgeSignature, channelShape, portFloor, portFloorAt, check, DEFAULTS, EDGES, EDGE_CLASSES, edgeLand, classOf, landOfClass, minEdgeLand, onLadder, seamProfile, grooveDepthAt } from '../lib/contract.js';
 
 const c = makeContract();
 
@@ -85,4 +85,36 @@ test('an old contract\'s plate fields are dropped on the way in', () => {
   assert.equal(old.plateMM, undefined);
   assert.equal(old.outletZMM, undefined);
   assert.equal(old.edgeLandMM, 22);
+});
+
+test('each side has its own class; a channel\'s port floor on a side is that side\'s rim less the channel depth', () => {
+  const cc = makeContract({ edges: { N: 52, E: 12, S: 22, W: 42 } });
+  assert.equal(edgeLand(cc, 'N'), 52);
+  assert.equal(classOf(cc, 'N'), 50);
+  assert.equal(classOf(cc, 'E'), 10);
+  assert.deepEqual(EDGES.map((e) => portFloorAt(cc, e)), [42, 2, 12, 32]);
+  // Entries at 12..52, exits at 2..42: every class from 10 to 60 has a port.
+  const floors = EDGE_CLASSES.map((k) => portFloorAt(makeContract({ edges: { N: landOfClass(cc, k) } }), 'N'));
+  assert.deepEqual(floors, [2, 12, 22, 32, 42, 52]);
+  assert.equal(edgeSignature(cc, { N: true }, 'N'), 'channel 30@42 52');
+  assert.equal(edgeSignature(cc, {}, 'E'), 'land 12');
+  assert.equal(tileEdgeProfile(cc, {}, 'W', 37), 42);
+  assert.equal(minEdgeLand(cc), 12);
+  assert.ok(check(cc).every((n) => n.severity !== 'error'));
+  // Off the ladder is said; a mountain side up to the print's height is on it.
+  assert.ok(check(makeContract({ edges: { N: 27 } })).some((n) => /not on the ladder/.test(n.message)));
+  assert.ok(onLadder(cc, 192) && !onLadder(cc, 202) && !onLadder(cc, 2));
+  // Junk in `edges` is dropped.
+  assert.equal(makeContract({ edges: { N: 'x', Q: 5 } }).edges, null);
+});
+
+test('the silicone groove rebates the port bed at the seam, never into the last millimetre of plastic', () => {
+  assert.equal(grooveDepthAt(c, 'N'), c.grooveDepthMM);
+  assert.equal(seamProfile(c, { N: true }, 'N', c.tileMM / 2), portFloor(c) - c.grooveDepthMM);
+  assert.equal(seamProfile(c, { N: true }, 'N', 10), c.edgeLandMM, 'beside the port the rim is the rim');
+  assert.equal(seamProfile(c, {}, 'N', c.tileMM / 2), c.edgeLandMM, 'no port, no groove');
+  const low = makeContract({ edges: { S: 12 } });
+  assert.equal(portFloorAt(low, 'S'), 2);
+  assert.equal(grooveDepthAt(low, 'S'), 1, 'a class-10 exit floor is 2 mm; the groove leaves 1');
+  assert.ok(check(low).some((n) => n.severity === 'note' && /groove/.test(n.message)));
 });
