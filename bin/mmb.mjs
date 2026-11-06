@@ -6,6 +6,7 @@
 //   node bin/mmb.mjs build module.json --out out/
 //   node bin/mmb.mjs preview module.json --out preview.png
 //   node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png
+//   node bin/mmb.mjs plate --height 20 --out plate-20.stl
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +18,10 @@ import { renderTile, encodePNG } from '../lib/preview.js';
 import { scatterCanopy } from '../lib/canopy.js';
 import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
-import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
+import { keySheet, keySolid, usableKeys, lockSettings } from '../lib/joint.js';
+import { camSheet, camSolid, camSettings } from '../lib/cam.js';
+import { plateSolid, plateFields, describePlate, pinSheet, PLATE_HEIGHTS } from '../lib/plate.js';
+import { makeContract, classOf } from '../lib/contract.js';
 import { EXAMPLE_SPEC } from '../lib/example.js';
 import { isBoardSpec, BOARD_SPEC_MESSAGE } from '../lib/scale.js';
 
@@ -37,8 +41,8 @@ const flag = (name, dflt = null) => {
 function describe(r) {
   const lines = [];
   const c = r.contract;
-  lines.push(`Contract: a ${c.tileMM} mm module, rim ${c.edgeLandMM} mm high, ports ${c.portWidthMM} mm wide and ` +
-             `${(c.edgeLandMM - r.portFloorMM).toFixed(0)} mm deep in the middle of each side.`);
+  lines.push(`Contract: a ${c.tileMM} mm module, edge classes ${EDGES.map((e) => `${e} ${classOf(c, e)}`).join(', ')}; ports ${c.portWidthMM} mm wide and ` +
+             `${c.channelDepthMM} mm deep in the middle of a side, rebated ${c.grooveDepthMM} mm for silicone at the seam.`);
   for (const n of r.contractNotes) lines.push(`  ${n.severity}: ${n.message}`);
   const errs = r.problems.filter((p) => p.severity === 'error');
   const notes = r.problems.filter((p) => p.severity !== 'error');
@@ -89,6 +93,23 @@ if (cmd === 'canopy') {
   }
   writeFileSync(out, encodePNG(rgb, W, n));
   console.log(`\n${out}: ${steps.length} patches, ${EXT} mm square, left to right in the order above.`);
+} else if (cmd === 'plate') {
+  // A spacer plate, on its own: not part of any module.
+  const spec = args[1] && !args[1].startsWith('--') ? readSpec(args[1]) : {};
+  const c = makeContract(spec.contract || {});
+  const lock = lockSettings(spec.locks || {});
+  const heights = flag('height') && flag('height') !== true ? String(flag('height')).split(',').map(Number) : [20];
+  for (const h of heights) {
+    const t0 = Date.now();
+    const p = plateFields(c, lock, { ...(spec.plates || {}), heightMM: h });
+    const tris = plateSolid(c, lock, { ...(spec.plates || {}), heightMM: h });
+    const out = heights.length === 1 && flag('out') && flag('out') !== true ? String(flag('out')) : `plate-${h}.stl`;
+    writeFileSync(out, writeSTL(tris, `spacer plate ${h} mm`));
+    console.log(`${out}: ${describePlate(p)}; ${(tris.length / 9).toLocaleString()} triangles, ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+  }
+  writeFileSync('pins.stl', writeSTL(pinSheet(4 * heights.length, lock, spec.plates || {}), 'stack pins'));
+  console.log(`pins.stl: ${4 * heights.length} pins, four for each plate: one in each corner socket, into whatever stands on it.`);
+  if (!heights.every((h) => PLATE_HEIGHTS.includes(h))) console.log(`(The usual heights are ${PLATE_HEIGHTS.join(', ')} mm; any from 10 up will do.)`);
 } else if (cmd === 'example') {
   process.stdout.write(JSON.stringify(EXAMPLE_SPEC, null, 2) + '\n');
 } else if (cmd === 'check' || cmd === 'build' || cmd === 'preview') {
@@ -121,15 +142,16 @@ if (cmd === 'canopy') {
       const ends = `${ch.from ? `in at ${ch.from}` : 'starts inside'}, ${ch.to ? `out at ${ch.to}` : 'ends inside'}`;
       console.log(`  ${ch.name.padEnd(10)} ${ch.widthMM} mm wide, ${ch.depthMM} mm deep, ${ch.lengthMM.toFixed(0)} mm long; ${ends}` +
                   `${ch.routed ? ' (routed down the valley)' : ''}; floor ${ch.startFloorMM.toFixed(1)} → ${ch.endFloorMM.toFixed(1)} mm` +
-                  `${ch.climbMM > 0.5 ? `, climbs ${ch.climbMM.toFixed(1)} mm on the way` : ''}`);
+                  `${ch.gorgeMM > 0.5 ? `, a gorge ${ch.gorgeMM.toFixed(1)} mm deeper than drawn through high ground` : ''}${ch.pondMM > 0.5 ? `, ponds ${ch.pondMM.toFixed(1)} mm behind its exit` : ''}`);
     }
   }
 
   if (t.keys.length || t.keysRefused.length) {
-    console.log(`\nSeam keys: ${t.keys.length} recess(es) cut in the underside, ${t.keysRefused.length} refused.`);
-    console.log(`  ${r.joint.padMM} mm pad on a ${r.joint.neckMM} mm neck, ${r.joint.depthMM} mm deep, ` +
-                `${r.joint.clearanceMM} mm slip fit — NOT glued, so the set comes apart. Print one key per recess.`);
-    for (const k of t.keysRefused) console.log(`  ${k.id} left out: ${k.why}`);
+    const cams = t.keys.filter((k) => k.kind === 'cam');
+    console.log(`\nCam lock: ${cams.length} cam housing(s) and ${usableKeys(r).length} key pocket(s), ${t.sockets.length} corner socket(s); ${t.keysRefused.length + t.socketsRefused.length} left out.`);
+    console.log(`  An ${r.joint.camMM} mm cam, a quarter turn with a coin, draws the key's head ${r.joint.drawMM} mm and the faces together. ` +
+                `Print one key per pocket and one cam per housing, ${t.camHeights.join(', ')} mm tall.`);
+    for (const k of [...t.keysRefused, ...t.socketsRefused]) console.log(`  ${k.id} left out: ${k.why}`);
   }
   for (const sp of t.springs) {
     console.log(`\nSpring at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm — pool bed ${sp.bedMM.toFixed(1)} mm, spills at ${sp.spillMM.toFixed(1)} mm, ` +
@@ -145,6 +167,13 @@ if (cmd === 'canopy') {
     }
   }
   for (const sk of t.lakesSkipped) console.log(`  ${sk.what} not carved — ${sk.why}`);
+  if (t.lakes.some((l) => l.shape)) {
+    console.log('\nLakes, for a resize (lakes.resize: [{ atMM, lengthMM, widthMM }] or { atMM, fill: true }):');
+    for (const l of t.lakes.filter((x) => x.shape)) {
+      console.log(`  ${l.what.padEnd(6)} at ${l.shape.atMM.map((v) => v.toFixed(0)).join(', ')} mm: ${l.shape.lengthMM.toFixed(0)} long × ${l.shape.widthMM.toFixed(0)} wide` +
+                  `${l.resized ? ` (resized from ${l.asDug.lengthMM.toFixed(0)} × ${l.asDug.widthMM.toFixed(0)})` : ''}`);
+    }
+  }
   console.log(`\nThe module: ${t.trees} trees, prints ${t.bbox.size[2].toFixed(1)} mm tall (land ${t.lowMM.toFixed(1)}–${t.highMM.toFixed(1)} mm), ` +
               `${t.mesh.triangles.toLocaleString()} triangles, ${t.mesh.watertight ? 'closed' : 'LEAKS'}.`);
   if (r.world.glacierStats) {
@@ -163,9 +192,25 @@ if (cmd === 'canopy') {
     const name = spec.name || 'module';
     writeFileSync(join(dir, `${name}.stl`), writeSTL(t.tris, name));
     const usable = usableKeys(r).length;
+    const written = [];
     if (usable) {
-      writeFileSync(join(dir, 'keys.stl'), writeSTL(keySheet(usable, r.joint), 'seam keys'));
-      writeFileSync(join(dir, 'key-one.stl'), writeSTL(keySolid(r.joint), 'seam key'));
+      writeFileSync(join(dir, 'keys.stl'), writeSTL(keySheet(usable, r.joint), 'lock keys'));
+      writeFileSync(join(dir, 'key-one.stl'), writeSTL(keySolid(r.joint), 'lock key'));
+      written.push('keys.stl', 'key-one.stl');
+    }
+    const camHeights = t.keys.filter((k) => k.kind === 'cam').map((k) => k.heightMM);
+    if (camHeights.length) {
+      writeFileSync(join(dir, 'cams.stl'), writeSTL(camSheet(camSettings(r.joint), camHeights), 'lock cams'));
+      written.push('cams.stl');
+    }
+    const plates = flag('plates');
+    if (plates && plates !== true) {
+      for (const h of String(plates).split(',').map(Number).filter((v) => v >= 10)) {
+        writeFileSync(join(dir, `plate-${h}.stl`), writeSTL(plateSolid(r.contract, r.joint, { ...(spec.plates || {}), heightMM: h }), `spacer plate ${h} mm`));
+        written.push(`plate-${h}.stl`);
+      }
+      writeFileSync(join(dir, 'pins.stl'), writeSTL(pinSheet(8, r.joint, spec.plates || {}), 'stack pins'));
+      written.push('pins.stl');
     }
     writeFileSync(join(dir, 'preview.png'), renderTile(t).png);
     if (t.springs.length) {
@@ -173,7 +218,7 @@ if (cmd === 'canopy') {
       writeFileSync(join(dir, 'tray.stl'), writeSTL(meshTile(tray.field), 'tray'));
       console.log(`tray.stl: ${tray.outerMM.map((v) => v.toFixed(0)).join(' x ')} x ${tray.heightMM} mm, the module rests at ${tray.sitsAtMM} mm.`);
     }
-    console.log(`\nWrote ${name}.stl${usable ? ', keys.stl, key-one.stl' : ''} and preview.png to ${dir}/ in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    console.log(`\nWrote ${[`${name}.stl`, ...written, 'preview.png'].join(', ')} to ${dir}/ in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   }
 } else {
   console.log(`mmb — modular map builder: one module at a time
@@ -183,6 +228,8 @@ if (cmd === 'canopy') {
   node bin/mmb.mjs build module.json --out out/
   node bin/mmb.mjs preview module.json --out preview.png
   node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png
+  node bin/mmb.mjs plate --height 10,20,30,40       spacer plates, ${PLATE_HEIGHTS.join('/')} mm
+  node bin/mmb.mjs build module.json --out out/ --plates 10,20
 
 Channel widths the editor offers: ${WIDTHS.join(', ')} mm bank to bank; any width goes in the spec.`);
 }

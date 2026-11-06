@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTile, buildWorld, worldKey } from '../lib/build.js';
-import { makeContract, portFloor, EDGES } from '../lib/contract.js';
+import { makeContract, portFloor, EDGES, seamProfile, tileEdgeProfile } from '../lib/contract.js';
 import { cutTile } from '../lib/tile.js';
 import { meshTile, checkWatertight } from '../lib/mesh.js';
 import { makeField, fill } from '../lib/field.js';
@@ -146,4 +146,62 @@ test('the example grows with its channel down the valley and its ice gone', { ti
   assert.equal(ch.from, null);
   assert.ok(Math.abs(ch.endFloorMM - portFloor(r.contract)) < 1e-6);
   assert.ok(r.tile.springs.length === 1, 'a spring at its start');
+});
+
+test('sides of different classes: each rim is exact, the corners step, and a side mates with any side of its class', () => {
+  const edges = { N: 42, E: 32, S: 22, W: 12 };
+  const r = buildTile({ ...SPEC, contract: { edges } });
+  const t = r.tile;
+  assert.ok(t.edges.worst < 1e-6, `${t.edges.worst} mm off`);
+  assert.ok(t.mesh.watertight);
+  assert.deepEqual(t.classes, { N: 40, E: 30, S: 20, W: 10 });
+  assert.equal(t.signatures.N, 'channel 30@32 42');
+  assert.equal(t.signatures.E, 'land 32');
+  // The channel comes in at the north (floor 32) and leaves at the south (floor 12).
+  const [ch] = t.channels;
+  assert.ok(Math.abs(ch.startFloorMM - 32) < 1e-6 && Math.abs(ch.endFloorMM - 12) < 1e-6);
+  // A neighbour to the east with its west side class 30 mates along the whole seam, corners apart.
+  const b = buildTile({ ...SPEC, seed: 9, channels: [], contract: { edges: { W: 32, N: 52, S: 12 } } }).tile.local;
+  const a = t.local;
+  const n = a.nx;
+  for (let k = 1; k < n - 1; k++) assert.ok(Math.abs(a.values[k * n + n - 1] - b.values[k * n]) < 1e-6, `E/W at ${k}`);
+  // A corner between a 42 side and a 32 side is a step, taken up just inside the corner.
+  const ne = a.values[(n - 1) * n + n - 1];
+  assert.ok(Math.abs(ne - 42) < 1e-6, 'the corner vertex is the north side\'s');
+  assert.ok(Math.abs(a.values[(n - 2) * n + n - 1] - 32) < 1e-6, 'one step south of it, the east side\'s');
+  assert.ok(Number.isFinite(a.values[(n - 3) * n + n - 3]));
+});
+
+test('every port is rebated for silicone at the seam, and the lock is cut on every side', () => {
+  const r = buildTile(SPEC);
+  const t = r.tile;
+  const mid = Math.round(100 / t.local.step);
+  assert.ok(t.grooveCells > 0);
+  const want = seamProfile(r.contract, t.ports, 'S', mid * t.local.step);
+  assert.ok(want < tileEdgeProfile(r.contract, t.ports, 'S', mid * t.local.step) - 0.5, 'the seam profile is below the port\'s');
+  assert.ok(Math.abs(t.local.values[mid] - want) < 1e-6, 'and the south port\'s bed at the seam is the groove');
+  assert.equal(t.keys.filter((k) => k.kind === 'cam').length, 4);
+  assert.equal(t.keys.filter((k) => k.kind === 'key').length, 4);
+  assert.equal(t.sockets.length, 4);
+  assert.deepEqual(t.camHeights, [22]);
+  assert.ok(t.mesh.watertight);
+});
+
+test('a lake resized by hand comes out the size asked for, and a resize for a lake that is gone is said', () => {
+  const bowl = { name: 'bowl', seed: 3, meshMM: 2, worldGrid: 64, glacier: false, spineHeightMM: 0, roughness: 0, lakes: { fillHollows: true },
+    volcanoes: [{ at: [100, 100], heightMM: 20, baseRadiusMM: 60, craterRadiusMM: 30, craterDepthMM: 12 }] };
+  const asDug = buildTile(bowl).tile.lakes.filter((l) => l.what === 'tarn');
+  assert.ok(asDug.length >= 1, 'the crater holds a tarn');
+  const big = asDug.sort((p, q) => q.areaMM2 - p.areaMM2)[0];
+  const { lengthMM, widthMM } = big.shape;
+  const want = { atMM: big.shape.atMM, lengthMM: Math.round(lengthMM * 0.5), widthMM: Math.round(widthMM * 0.6) };
+  const r = buildTile({ ...bowl, lakes: { fillHollows: true, resize: [want, { atMM: [190, 10] }] } });
+  const l = r.tile.lakes.find((x) => x.resized);
+  assert.ok(l, 'the tarn was resized');
+  assert.ok(Math.abs(l.shape.lengthMM - want.lengthMM) < 4, `${l.shape.lengthMM.toFixed(1)} long against ${want.lengthMM}`);
+  assert.ok(Math.abs(l.shape.widthMM - want.widthMM) < 4, `${l.shape.widthMM.toFixed(1)} wide against ${want.widthMM}`);
+  assert.ok(r.problems.some((p) => /no hollow there any more/.test(p.message)));
+  assert.ok(r.tile.mesh.watertight);
+  const gone = buildTile({ ...bowl, lakes: { fillHollows: true, resize: [{ atMM: big.shape.atMM, fill: true }] } });
+  assert.equal(gone.tile.lakesFilledIn.length, 1, 'filled in');
 });

@@ -6,7 +6,7 @@
 // and the canvas change with it. A field left empty is a key taken out: the
 // default, as the CLI would read it.
 
-import { EDGES, WIDTHS, makeContract } from '../lib/contract.js';
+import { EDGES, WIDTHS, EDGE_CLASSES, BLENDS, makeContract, classOf, edgeLand, portFloorAt, blendOf } from '../lib/contract.js';
 import { CHANNEL_DEFAULTS } from '../lib/channel.js';
 import { LAKE_DEFAULTS, PROFILES } from '../lib/lake.js';
 import { FOUNTAIN_DEFAULTS } from '../lib/fountain.js';
@@ -101,6 +101,7 @@ export function renderInspector(root, api) {
       case 'lake': body = lakePanel(api, sel); break;
       case 'springpoint': body = springPanel(api, sel); break;
       case 'wood': body = woodPanel(api, sel); break;
+      case 'water': body = waterPanel(api, sel); break;
       default: body = modulePanel(api);
     }
   } catch (err) {
@@ -173,16 +174,33 @@ function modulePanel(api) {
       num(api, 'Pool', { get: (x) => x.fountains?.poolRadiusMM, set: (x, v) => ops.setPath(x, 'fountains.poolRadiusMM', v), unit: 'mm', step: 0.5, min: 5, placeholder: String(FOUNTAIN_DEFAULTS.poolRadiusMM) }),
     ),
     group('Woods over the whole module', woodLayers(api)),
+    group('Sides',
+      h('p', { class: 'hint' }, 'Every side is a class: its rim stands 2 mm more than the class above the base. A side mates flush with any side of its class. A channel crosses a side 10 mm below its rim, so water comes in at 12 to 52 mm and leaves at 2 to 42.'),
+      EDGES.map((e) => sideRow(api, c, e)),
+    ),
     group('Contract',
       num(api, 'Module', { get: (x) => x.contract?.tileMM, set: (x, v) => setContract(x, 'tileMM', v), unit: 'mm', step: 10, min: 50, placeholder: String(c.tileMM) }),
-      num(api, 'Rim', { get: (x) => x.contract?.edgeLandMM, set: (x, v) => setContract(x, 'edgeLandMM', v), unit: 'mm', step: 1, min: 4, placeholder: String(c.edgeLandMM), title: 'How high every edge stands. Every module built to this contract has the same rim, so they mate.' }),
+      num(api, 'Default rim', { get: (x) => x.contract?.edgeLandMM, set: (x, v) => setContract(x, 'edgeLandMM', v), unit: 'mm', step: 10, min: 12, placeholder: String(c.edgeLandMM), title: 'How high a side stands when it has not been given its own class.' }),
       num(api, 'Port width', { get: (x) => x.contract?.portWidthMM, set: (x, v) => setContract(x, 'portWidthMM', v), unit: 'mm', step: 5, min: 6, placeholder: String(c.portWidthMM), title: 'A channel crossing the rim is this wide there, whatever it is inland.' }),
       num(api, 'Channel depth', { get: (x) => x.contract?.channelDepthMM, set: (x, v) => setContract(x, 'channelDepthMM', v), unit: 'mm', step: 1, min: 1, placeholder: String(c.channelDepthMM), title: 'How deep a channel is below the ground, and how deep the port is.' }),
-      h('p', { class: 'hint' }, `Every edge stands ${c.edgeLandMM} mm high; a channel crosses it ${c.portWidthMM} mm wide and ${Math.round(c.edgeLandMM - c.channelDepthMM) > 0 ? c.channelDepthMM : c.edgeLandMM - 3} mm deep, in the middle of the side. Any module built to this sits against any other.`),
+      h('p', { class: 'hint' }, `A channel crosses a side ${c.portWidthMM} mm wide and ${c.channelDepthMM} mm deep, in the middle of the side, with a ${c.grooveDepthMM} mm groove across its bed at the seam for a bead of silicone.`),
     ),
     editsGroup(api),
     designNotes(api),
   ];
+}
+
+/** One side: its class, and whether the ground stands up to it as a cliff or slopes down to it. */
+function sideRow(api, c, e) {
+  const k = classOf(c, e);
+  const classes = EDGE_CLASSES.includes(k) ? EDGE_CLASSES : [...EDGE_CLASSES, k].sort((a, b) => a - b);
+  const port = api.state.say?.ports?.[e];
+  return h('div', { class: 'side' },
+    seg(`${SIDE[e][0].toUpperCase()}${SIDE[e].slice(1)}`, classes.map((v) => [v, String(v)]), k,
+      (v) => api.commit((x) => ops.setEdgeClass(x, e, Number(v)), `${SIDE[e]} side class`), { wide: true, id: `side.${e}.class` }),
+    num(api, `${SIDE[e]} class`, { get: () => k, set: (x, v) => ops.setEdgeClass(x, e, v), unit: '', step: 10, min: 10, max: 190, id: `side.${e}.classMM`, title: 'Any multiple of 10 up to 190: a side that is all mountain can stand as high as the print' }),
+    seg('Meets it', BLENDS, blendOf(c, e), (v) => api.commit((x) => ops.setEdgeBlend(x, e, v === c.rimBlendMM ? undefined : Number(v)), `${SIDE[e]} side blend`), { wide: true, id: `side.${e}.blend` }),
+    h('p', { class: 'hint' }, `Rim ${edgeLand(c, e)} mm${port ? `; the channel crosses at ${portFloorAt(c, e)} mm` : ''}.`));
 }
 
 /** The contract is written whole once it is touched, so the four numbers read together in the JSON. */
@@ -365,6 +383,56 @@ function lakePanel(api, sel) {
       choose(api, 'Bed', { options: [['', 'as the module'], ...PROFILES.map((x) => [x, x])], get: g('profile'), set: p('profile'), id: 'l.profile' }),
     ),
     h('div', { class: 'row-btns' }, del('Delete lake', () => { api.commit((x) => { x.lakes.place.splice(i, 1); ops.tidy(x); }, 'delete a lake'); api.select(null); })),
+  ];
+}
+
+/**
+ * A body of water as grown: what it is and how big, and -- for a tarn the
+ * ice dug -- fields to make it another size, or fill it in. The size is
+ * written as a resize at the lake's middle; the module grows again with it.
+ */
+function waterPanel(api, sel) {
+  const g = api.state.grown;
+  const s = api.state.spec;
+  const all = g?.report?.lakes?.all || [];
+  const l = all[sel.index];
+  if (!l) throw new Error('no such water');
+  const resize = Number.isInteger(l.resizeIndex) ? s.lakes?.resize?.[l.resizeIndex] : null;
+  const sh = l.shape;
+  const field = (label, key) => {
+    const input = h('input', { type: 'number', step: 1, min: 4, value: String(Math.round(resize?.[key] ?? sh[key])), 'data-field': `water.${key}`, 'aria-label': label });
+    input.addEventListener('change', () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v) || v < 4) return;
+      const want = { lengthMM: resize?.lengthMM ?? sh.lengthMM, widthMM: resize?.widthMM ?? sh.widthMM, [key]: v };
+      api.commit((x) => ops.resizeLake(x, l, want), `resize a ${l.what}`);
+    });
+    return h('label', { class: 'field' }, h('span', {}, label), h('span', { class: 'ctl' }, input, h('span', { class: 'unit' }, 'mm')));
+  };
+  const tarn = l.what === 'tarn';
+  return [
+    h('h2', {}, tarn ? 'Tarn' : 'Lake'),
+    h('p', { class: 'sub' }, tarn ? 'A hollow the ice dug, filled with water to its sill.' : 'A lake you placed or painted.'),
+    group('As grown', facts([
+      ['Long', `${sh.lengthMM} mm`],
+      ['Wide', `${sh.widthMM} mm`],
+      ['Long axis', `${sh.angleDeg}° from east`],
+      ['Middle', `${sh.atMM.map((v) => Math.round(v)).join(', ')} mm`],
+      ['Area', `${l.areaMM2} mm²`],
+      ['Deepest', `${l.deepestMM} mm`],
+      ['Surface', `${l.surfaceMM} mm up`],
+      ['Epoxy', `${l.millilitres} ml`],
+      l.asDug && l.resizeIndex != null ? ['As the ice dug it', `${l.asDug.lengthMM} × ${l.asDug.widthMM} mm`] : null,
+    ])),
+    tarn ? group('Size',
+      field('Length', 'lengthMM'),
+      field('Width', 'widthMM'),
+      h('p', { class: 'hint' }, 'The tarn keeps its own outline, scaled about its middle. Where it gets smaller, the hollow is filled in to a flat just above the water; where it gets bigger, the bank is dug out, and any low ground at its edge is raised to hold the water in.'),
+      l.dammed ? h('p', { class: 'warn-line' }, `It reached past its old sill, so ${l.dammed} cells of bank were raised to hold it.`) : null,
+      l.clipped ? h('p', { class: 'warn-line' }, 'It was kept clear of the rim, so it is shorter there than asked.') : null,
+      h('div', { class: 'row-btns' },
+        h('button', { type: 'button', 'data-field': 'water.fill', onclick: () => { api.commit((x) => ops.fillLake(x, l), 'fill in a tarn'); api.select(null); } }, 'Fill it in'),
+        resize ? h('button', { type: 'button', 'data-field': 'water.reset', onclick: () => { api.commit((x) => ops.unresizeLake(x, l.resizeIndex), 'tarn back to as dug'); } }, 'Back to as dug') : null)) : h('p', { class: 'hint' }, 'Its size is set by where it was placed or painted: select its handle in Draw to change it.'),
   ];
 }
 

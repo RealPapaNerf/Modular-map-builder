@@ -12,7 +12,7 @@
 // 0..tileMM -- in the margin, where the ground is grown but not printed.
 // Channels, lakes, springs, woods and edits are on the module.
 
-import { makeContract, EDGES } from '../lib/contract.js';
+import { makeContract, EDGES, edgeLand, classOf, portFloorAt, landOfClass } from '../lib/contract.js';
 import { snapToPorts, endPoint, isEdge, CHANNEL_DEFAULTS } from '../lib/channel.js';
 import { EDIT_DEFAULTS, editsFor, strokeWeight } from '../lib/edits.js';
 import { DEFAULT_M_PER_MM, marginOf } from '../lib/scale.js';
@@ -341,17 +341,18 @@ export function shiftFeature(spec, kind, index, dx, dy) {
 /** The order the example writes its keys in, so the JSON reads the same however it was drawn. */
 export const KEY_ORDER = ['name', 'seed', 'meshMM', 'metresPerMM', 'marginMM', 'worldGrid',
   'spineHeightMM', 'spineWidthMM', 'baseElevMM', 'roughness', 'spine', 'flats', 'volcanoes', 'glacier', 'reposeDeg', 'reposePasses',
-  'channels', 'channelDefaults', 'canopy', 'lakes', 'fountains', 'edits', 'joints', 'tray', 'contract'];
+  'channels', 'channelDefaults', 'canopy', 'lakes', 'fountains', 'edits', 'joints', 'locks', 'plates', 'tray', 'contract'];
 
 const ORDERS = {
   channels: ['name', 'widthMM', 'depthMM', 'from', 'to', 'path'],
   canopy: ['kind', 'crownMM', 'heightMM', 'density', 'spacingMM', 'minZMM', 'maxZMM', 'thinningMM', 'maxSlopeDeg', 'region'],
   volcanoes: ['at', 'heightMM', 'baseRadiusMM', 'craterRadiusMM', 'craterDepthMM', 'breachAzimuthDeg'],
   flats: ['at', 'radiusMM', 'elevMM'],
-  lakes: ['fillHollows', 'depthMM', 'shoreMM', 'profile', 'place'],
+  lakes: ['fillHollows', 'depthMM', 'shoreMM', 'profile', 'place', 'resize'],
   fountains: ['auto', 'tubeOdMM', 'poolRadiusMM', 'place'],
   place: ['atMM', 'pathMM', 'radiusMM', 'depthMM'],
-  contract: ['tileMM', 'edgeLandMM', 'portWidthMM', 'channelDepthMM'],
+  contract: ['tileMM', 'edgeLandMM', 'edges', 'blends', 'portWidthMM', 'channelDepthMM'],
+  sides: ['N', 'E', 'S', 'W'],
 };
 
 /** An object's keys in a given order, then whatever else it has. */
@@ -371,7 +372,10 @@ export function canonical(spec) {
     out[k] = orderKeys(out[k], ORDERS[k]);
     if (Array.isArray(out[k].place)) out[k].place = out[k].place.map((x) => orderKeys(x, ORDERS.place));
   }
-  if (out.contract) out.contract = orderKeys(out.contract, ORDERS.contract);
+  if (out.contract) {
+    out.contract = orderKeys(out.contract, ORDERS.contract);
+    for (const k of ['edges', 'blends']) if (out.contract[k]) out.contract[k] = orderKeys(out.contract[k], ORDERS.sides);
+  }
   return out;
 }
 
@@ -425,6 +429,87 @@ export function getPath(spec, path) {
   return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), spec);
 }
 
+/* ----------------------------------------------------------------- edges */
+
+/**
+ * One side's class: its rim stands baseMM + cls above the module's base. The
+ * default class (the contract's edgeLandMM) is written as no entry at all,
+ * so a spec that never touched a side reads as it did.
+ */
+export function setEdgeClass(spec, edge, cls) {
+  if (!EDGES.includes(edge)) return;
+  const c = contractOf(spec);
+  spec.contract = { ...(spec.contract || {}) };
+  const edges = { ...(spec.contract.edges || {}) };
+  const land = Number.isFinite(cls) ? landOfClass(c, cls) : undefined;
+  if (land === undefined || land === c.edgeLandMM) delete edges[edge]; else edges[edge] = land;
+  if (Object.keys(edges).length) spec.contract.edges = edges; else delete spec.contract.edges;
+  if (!Object.keys(spec.contract).length) delete spec.contract;
+}
+
+/** How one side's ground meets its rim: the blend in mm, or undefined for the module's. */
+export function setEdgeBlend(spec, edge, mm) {
+  if (!EDGES.includes(edge)) return;
+  spec.contract = { ...(spec.contract || {}) };
+  const b = { ...(spec.contract.blends || {}) };
+  if (Number.isFinite(mm)) b[edge] = mm; else delete b[edge];
+  if (Object.keys(b).length) spec.contract.blends = b; else delete spec.contract.blends;
+  if (!Object.keys(spec.contract).length) delete spec.contract;
+}
+
+/* ----------------------------------------------------------------- lakes */
+
+/**
+ * A grown lake made a different size: written as a resize at the lake's own
+ * middle, so the build finds the hollow again by where it is. `lake` is the
+ * lake as the report gives it, with its shape; a resize already written
+ * for it is replaced, not stacked.
+ */
+export function resizeLake(spec, lake, { lengthMM, widthMM } = {}) {
+  if (!lake?.shape?.atMM) return -1;
+  spec.lakes = spec.lakes || {};
+  const list = Array.isArray(spec.lakes.resize) ? spec.lakes.resize : [];
+  const at = lake.shape.atMM.map(r1);
+  const entry = { atMM: at };
+  if (Number.isFinite(lengthMM)) entry.lengthMM = r1(lengthMM);
+  if (Number.isFinite(widthMM)) entry.widthMM = r1(widthMM);
+  const i = resizeIndexFor(list, lake, at);
+  if (i >= 0) list[i] = { ...entry, atMM: list[i].atMM };
+  else list.push(entry);
+  spec.lakes.resize = list;
+  return i >= 0 ? i : list.length - 1;
+}
+
+/**
+ * The resize already written for this lake: the one the build says it used,
+ * or one written at this same spot since -- a second change made before the
+ * module has grown again replaces the first instead of stacking on it.
+ */
+function resizeIndexFor(list, lake, at) {
+  if (Number.isInteger(lake.resizeIndex) && list[lake.resizeIndex]) return lake.resizeIndex;
+  return list.findIndex((r) => Array.isArray(r?.atMM) && Math.hypot(r.atMM[0] - at[0], r.atMM[1] - at[1]) < 1);
+}
+
+/** Fill a grown lake in: dry ground where it was. */
+export function fillLake(spec, lake) {
+  if (!lake?.shape?.atMM) return -1;
+  spec.lakes = spec.lakes || {};
+  const list = Array.isArray(spec.lakes.resize) ? spec.lakes.resize : [];
+  const i = resizeIndexFor(list, lake, lake.shape.atMM.map(r1));
+  const entry = { atMM: i >= 0 ? list[i].atMM : lake.shape.atMM.map(r1), fill: true };
+  if (i >= 0) list[i] = entry; else list.push(entry);
+  spec.lakes.resize = list;
+  return i >= 0 ? i : list.length - 1;
+}
+
+/** Take a resize off: the lake goes back to the size the ice dug it. */
+export function unresizeLake(spec, index) {
+  const list = spec.lakes?.resize;
+  if (!Array.isArray(list) || !list[index]) return;
+  list.splice(index, 1);
+  if (!list.length) delete spec.lakes.resize;
+}
+
 /* ---------------------------------------------------------------- the say */
 
 const SIDE = { N: 'north', E: 'east', S: 'south', W: 'west' };
@@ -461,7 +546,22 @@ export function describe(spec) {
       return `${name}: ${w} by ${d} mm, ${where}`;
     }).join('; ')
     : 'no channels';
-  out.push({ kind: 'module', text: `A ${T} mm module, rim at ${c.edgeLandMM} mm. ${chanText.charAt(0).toUpperCase()}${chanText.slice(1)}.` });
+  const sides = EDGES.map((e) => classOf(c, e));
+  const classText = sides.every((k) => k === sides[0]) ? `every side class ${sides[0]} (${edgeLand(c, 'N')} mm)`
+    : `sides ${EDGES.map((e) => `${e} ${classOf(c, e)}`).join(', ')}`;
+  out.push({ kind: 'module', text: `A ${T} mm module, ${classText}. ${chanText.charAt(0).toUpperCase()}${chanText.slice(1)}.` });
+  for (const { ch, i, ends } of chans) {
+    if (!ends?.from || !ends?.to) continue;
+    const fin = portFloorAt(c, ends.from);
+    const fout = portFloorAt(c, ends.to);
+    if (fin <= fout) {
+      notes.push({
+        severity: 'warning',
+        message: `${ch.name || `channel ${i + 1}`} comes in by the ${SIDE[ends.from]} (floor ${fin} mm) and leaves by the ${SIDE[ends.to]} (floor ${fout} mm): `
+          + `${fin === fout ? 'there is no fall across the module' : 'it would have to climb'}. Give the ${SIDE[ends.from]} side a higher class.`,
+      });
+    }
+  }
   const woods = (spec.canopy || []).length;
   const lakes = (spec.lakes?.place || []).length;
   const springs = (spec.fountains?.place || []).length + (spec.fountains && spec.fountains.auto !== false ? chans.length : 0);
@@ -472,6 +572,8 @@ export function describe(spec) {
   if (springs) bits.push(`${springs} spring${springs > 1 ? 's' : ''}`);
   if (woods) bits.push(`${woods} wood${woods > 1 ? 's' : ''}`);
   if (bits.length) out.push({ kind: 'on', text: `${bits.join(', ')}.`.replace(/^./, (m) => m.toUpperCase()) });
-  out.push({ kind: 'ports', text: portList.length ? `Mates with a channel edge on the ${portList.map((e) => SIDE[e]).join(' and ')}, and with land on the rest.` : 'All four sides are land: it mates with any land edge.' });
+  out.push({ kind: 'ports', text: portList.length
+    ? `A channel crosses the ${portList.map((e) => `${SIDE[e]} at ${portFloorAt(c, e)} mm`).join(' and the ')}; the rest is land. Each side mates flush with any side of its class.`
+    : 'All four sides are land: each mates flush with any land side of its class.' });
   return { sentences: out, notes, ports: Object.fromEntries(EDGES.map((e) => [e, !!ports[e]])) };
 }

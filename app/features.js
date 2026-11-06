@@ -166,6 +166,32 @@ export function drawTileFeatures(ctx, st, cam, th, { alpha = 1 } = {}) {
     ctx.fillStyle = th.spring;
     ctx.beginPath(); ctx.arc(cam.sx(x), cam.sy(y), Math.max(3, r * 0.35), 0, Math.PI * 2); ctx.fill();
   }
+  // The water the last build left: its long axis and its size, so a tarn
+  // can be picked and its dimensions read off before it is changed.
+  if (st.grown && !st.grown.stale) {
+    (st.grown.report?.lakes?.all || []).forEach((l, i) => {
+      if (!l.shape) return;
+      const [x, y] = l.shape.atMM;
+      const a = (l.shape.angleDeg * Math.PI) / 180;
+      const hl = l.shape.lengthMM / 2;
+      const on = st.selection?.type === 'water' && st.selection.index === i;
+      ctx.strokeStyle = on ? th.select : th.water;
+      ctx.lineWidth = on ? 2.5 : 1.2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(cam.sx(x - Math.cos(a) * hl), cam.sy(y - Math.sin(a) * hl));
+      ctx.lineTo(cam.sx(x + Math.cos(a) * hl), cam.sy(y + Math.sin(a) * hl));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = on ? th.select : th.water;
+      ctx.beginPath(); ctx.arc(cam.sx(x), cam.sy(y), 4, 0, Math.PI * 2); ctx.fill();
+      if (cam.s > 1.2 || on) {
+        ctx.font = '500 10px ui-monospace, Menlo, monospace';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(`${l.shape.lengthMM}×${l.shape.widthMM}`, cam.sx(x) + 7, cam.sy(y));
+      }
+    });
+  }
   ctx.restore();
 }
 
@@ -199,6 +225,15 @@ export function handles(st, cam) {
     if (!Array.isArray(s.atMM)) return;
     out.push({ kind: 'springpoint', index: i, x: cam.sx(s.atMM[0]), y: cam.sy(s.atMM[1]), r: 10 });
   });
+  // The water the last build left, tarns and all, at its middle: click one
+  // to see how big it is and change it. Not dragged; a tarn is where the
+  // ice put it.
+  if (st.grown && !st.grown.stale) {
+    (st.grown.report?.lakes?.all || []).forEach((l, i) => {
+      if (!l.shape) return;
+      out.push({ kind: 'water', index: i, fixed: true, x: cam.sx(l.shape.atMM[0]), y: cam.sy(l.shape.atMM[1]), r: 9 });
+    });
+  }
   (spec.canopy || []).forEach((layer, li) => {
     if (!Array.isArray(layer.region)) return;
     layer.region.forEach(([x, y], vi) => out.push({ kind: 'wood-vertex', index: li, vertex: vi, x: cam.sx(x), y: cam.sy(y), r: 7 }));

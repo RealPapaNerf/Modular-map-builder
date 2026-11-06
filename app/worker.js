@@ -21,6 +21,8 @@ import { scaleOf, marginOf } from '../lib/scale.js';
 import { shadeTile } from '../lib/shade.js';
 import { writeSTL } from '../lib/stl.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
+import { camSheet, camSolid, camSettings } from '../lib/cam.js';
+import { plateSolid, pinSheet, PLATE_HEIGHTS } from '../lib/plate.js';
 import { meshTile } from '../lib/mesh.js';
 import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
@@ -51,8 +53,16 @@ function manifest() {
   });
   const usable = usableKeys(result).length;
   if (usable) {
-    out.push({ id: 'keys', name: 'keys.stl', group: 'joinery', note: `${usable} key${usable > 1 ? 's' : ''} on one sheet, one per recess`, make: () => writeSTL(keySheet(usable, result.joint), 'seam keys') });
-    out.push({ id: 'key-one', name: 'key-one.stl', group: 'joinery', note: 'a single key, for test-fitting', make: () => writeSTL(keySolid(result.joint), 'seam key') });
+    out.push({ id: 'keys', name: 'keys.stl', group: 'joinery', note: `${usable} key${usable > 1 ? 's' : ''} on one sheet, one per pocket`, make: () => writeSTL(keySheet(usable, result.joint), 'lock keys') });
+    out.push({ id: 'key-one', name: 'key-one.stl', group: 'joinery', note: 'a single key, for test-fitting', make: () => writeSTL(keySolid(result.joint), 'lock key') });
+  }
+  const cams = (t.keys || []).filter((k) => k.kind === 'cam').map((k) => k.heightMM);
+  if (cams.length) {
+    out.push({
+      id: 'cams', name: 'cams.stl', group: 'joinery', note: `${cams.length} cam${cams.length > 1 ? 's' : ''}, each as tall as its rim: ${[...new Set(cams)].join(', ')} mm`,
+      make: () => writeSTL(camSheet(camSettings(result.joint), cams), 'lock cams'),
+    });
+    out.push({ id: 'cam-one', name: 'cam-one.stl', group: 'joinery', note: 'a single cam, for test-fitting', make: () => writeSTL(camSolid(camSettings(result.joint), Math.min(...cams)), 'lock cam') });
   }
   if (t.springs.length) {
     out.push({
@@ -63,6 +73,17 @@ function manifest() {
         return writeSTL(meshTile(tray.field), 'tray');
       },
     });
+  }
+  // Spacer plates are not part of the module: they are offered so a module
+  // can stand on a stack of them, at any height wanted.
+  if (result.joint.enabled !== false) {
+    for (const h of PLATE_HEIGHTS) {
+      out.push({
+        id: `plate-${h}`, name: `plate-${h}.stl`, group: 'plates', note: `${result.contract.tileMM} × ${result.contract.tileMM} × ${h} mm, hollow, tube holes, the same cam lock`,
+        make: () => writeSTL(plateSolid(result.contract, result.joint, { ...(spec.plates || {}), heightMM: h }), `spacer plate ${h} mm`),
+      });
+    }
+    out.push({ id: 'pins', name: 'pins.stl', group: 'plates', note: 'eight pins: four join a plate to the one on it, or to the module', make: () => writeSTL(pinSheet(8, result.joint, spec.plates || {}), 'stack pins') });
   }
   return out;
 }
@@ -120,7 +141,9 @@ self.onmessage = async (ev) => {
     }
 
     if (msg.type === 'zip') {
-      const all = manifest();
+      // The plates are left out of the module's ZIP: they are only wanted
+      // in the heights somebody needs, and each is asked for on its own.
+      const all = manifest().filter((f) => f.group !== 'plates');
       const files = [];
       for (let i = 0; i < all.length; i++) {
         post({ type: 'progress', message: `Packing ${all[i].name} (${i + 1}/${all.length})` });

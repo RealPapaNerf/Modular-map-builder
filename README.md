@@ -1,11 +1,14 @@
 # Modular map builder
 
 Procedurally generated, 3D-printable terrain **modules**, built one at a
-time, that **mate with each other**: any module's north edge sits against
-any module's south edge, whatever is on either of them. Channels are
-**drawn** across a module, 10 mm deep, with the cross-section of a
-parenthesis on its side. Glaciers carve the ground and then **melt out
-entirely**, so what prints is the terrain the ice left and never the ice.
+time, that **mate with each other**: every side is a declared **class**, and
+a side mates flush with any side of its class, whatever is on either module.
+Channels are **drawn** across a module through the middle of any side, 10 mm
+deep, with the cross-section of a parenthesis on its side, and cut as a
+gorge where the line crosses high ground. Glaciers carve the ground and then
+**melt out entirely**; a lake they dug can be clicked and made another size.
+Modules **lock together** with a cam you turn with a coin, and stand on
+hollow **spacer plates** so their channels line up.
 
 No dependencies. Node 18 or newer and nothing else.
 
@@ -17,13 +20,14 @@ command line:
 node bin/mmb.mjs example > module.json
 node bin/mmb.mjs check module.json          # the contract and the channels, no ice
 node bin/mmb.mjs build module.json --out out/
+node bin/mmb.mjs plate --height 10,20       # spacer plates, if you want them
 ```
 
 ![One module, hillshaded](docs/preview.png)
 
 *The example: a 200 mm module with a range across the middle of it, the
 glaciers' valleys down each flank, a cirque lake, and a channel from under
-the crest out through the south port. The rim is 22 mm high all the way
+the crest out through the south port. Every side is class 20, its rim 22 mm high all the way
 round; the only break in it is the port.*
 
 ---
@@ -38,22 +42,43 @@ each other and nothing else. That is gone, on purpose. The builder now grows
 
 ### The contract
 
-Three numbers, and every module built to them sits against every other:
+Every side of a module is a **class**: the rim stands 2 mm (`baseMM`) more
+than the class above the module's base, flat the whole way along. A side
+mates flush with any side of its class; against a side of another class it
+is a step, which is a cliff, and cliffs are terrain. The author picks each
+side's class in the inspector (`contract.edges`, in rim millimetres).
 
-| | default | what it says |
+| class | rim | a channel crosses at |
 |---|---|---|
-| `edgeLandMM` | 22 | every edge of every module stands this high at its rim, flat, on all four sides |
-| `portWidthMM` | 30 | a channel crossing the rim does so at the **middle** of that side, this wide |
-| `channelDepthMM` | 10 | and this deep, in the cross-section below |
+| 10 | 12 mm | 2 mm |
+| 20 (default) | 22 mm | 12 mm |
+| 30 | 32 mm | 22 mm |
+| 40 | 42 mm | 32 mm |
+| 50 | 52 mm | 42 mm |
+| 60 | 62 mm | 52 mm |
 
-So a land edge mates with a land edge, a channel edge mates with a channel
-edge, and a land edge against a channel edge is a channel running into a
-bank, which is not an error — it is a wall the water stops at. There are no
-plate levels, no falls, no corner heights, because there is no map to solve.
+The ladder carries on in tens to 190, so a side that is all mountain can
+stand as high as the print. A channel crosses a side only at its **middle**,
+`portWidthMM` (30) wide and `channelDepthMM` (10) deep, so water comes in at
+12..52 mm and leaves at 2..42 mm, one class or more lower. A module that hands
+its water to a lower one stands on spacer plates that make up the
+difference, or the lower one's side is a lower class.
+
+Across every port, in the last 3 mm before the seam, the bed has a **groove
+for silicone** 1 mm deep (`grooveWidthMM`, `grooveDepthMM`). Lay a bead in it
+on both modules; when they are locked the two beads press together and the
+junction holds water.
+
+Each side also says how the ground **meets** its rim (`contract.blends`): a
+cliff, the ground standing right up to the edge and dropping to the rim in
+the last few millimetres; or a slope, bent down over 60 mm or more.
+
+The ground may go below the lowest rim a module has, for a lake or a low
+floor, but it comes back up to every rim and never near the base.
 
 The check that the whole repository exists to pass is still there: every
-finished module honours its rim to **under a millionth of a millimetre**,
-measured on the thing that will be printed.
+finished module honours every rim to **under a millionth of a millimetre**,
+groove included, measured on the thing that will be printed.
 
 ```
 Edges:
@@ -63,6 +88,12 @@ Edges:
   W  land 22                err 0.0000 mm
   worst edge error 0.0000 mm — it mates
 ```
+
+Where two sides of different classes meet at a corner, the step between them
+is fanned in from the corner: each side's leftover is spread inward
+weighted by the inverse square of the distance to it, so near the corner the
+step turns through a narrow arc, and further in it widens and fades. The
+corner vertex itself belongs to the north or south side.
 
 ### A level rim on sloping ground
 
@@ -121,18 +152,25 @@ in `lib/contract.js` is that curve, and it is the one function both the rim
 profile and the carve use, so the channel a module cuts inland is the same
 curve it hands over at its edge.
 
-**The floor follows the ground.** A 10 mm channel is 10 mm below the land
-along its whole length, with the ground smoothed along the line first so the
-bed does not inherit every bump. Where it meets a port it is eased onto the
+**The floor follows the ground, and never rises.** A 10 mm channel is 10 mm
+below the land along its line, with the ground smoothed along the line first
+so the bed does not inherit every bump. But water does not run uphill, so
+the floor is also held to the lowest it has been so far. A line drawn over
+high ground cuts a **gorge** through it, as deep as the rise is high, and the
+cross-section goes to walls. Where it meets a port it is eased onto that
 port's floor over about a width. It only ever *cuts*: across a hillside the
-uphill bank is the cut and the downhill bank is the hill. A channel drawn
-over a rise climbs it, and the report says so rather than quietly digging a
-gorge:
+uphill bank is the cut and the downhill bank is the hill. The report says
+what happened:
 
 ```
-note — main climbs 4.2 mm somewhere along its line, because it was drawn over a rise.
-Water put in at its start ponds there. Move the line, or dig it with the Lower brush.
+note — main runs through high ground on its line, so it is cut as a gorge there,
+up to 21.8 mm deeper than its 10 mm: water does not run uphill.
+note — main's line goes 2.1 mm below the floor of the S port before it gets there,
+so the water stands that deep behind the port before it spills out.
 ```
+
+A channel that comes in by a side of the same class or lower than the side it
+leaves by is warned about before anything grows: there is no fall.
 
 **Or let the generator route it.** A channel given as two ends and no line
 is routed down the valley when the module grows: least cost over the
@@ -143,7 +181,8 @@ of these, so it follows the valley whatever the seed; the inspector's
 *Take the line it found* turns it into a drawn one you can drag.
 
 Widths are free — the editor offers 20, 30, 40 and 60 mm bank to bank — and
-at the rim a channel is the port's width whatever it is inland. Two channels
+at the rim a channel is the port's width whatever it is inland. A channel may
+come in and go out by any two sides, and take any line between. Two channels
 cannot leave by one side; there is one port a side.
 
 ## The glaciers carve, and then they go
@@ -179,6 +218,76 @@ So:
 What you see is the bed: cirques, troughs, moraines, the lakes behind them.
 `glacier.meltOut: false` keeps the old ending, for comparison.
 
+## Lakes you can resize
+
+The ice may dig large lakes, and they are kept. Every body of water the
+build makes is measured along its long axis. Click one in the 3D view or on
+the flat view and the inspector shows how long and wide it is, its bearing,
+area, depth and the epoxy it takes. A tarn the ice dug can be made another
+size there:
+
+```json
+"lakes": { "resize": [ { "atMM": [96, 118], "lengthMM": 30, "widthMM": 40 },
+                       { "atMM": [40, 160], "fill": true } ] }
+```
+
+A resize is found again by where it is, so it survives a regrow that leaves
+the hollow roughly in place, and the report says when one finds nothing.
+The tarn keeps its own outline, scaled about its middle. Where it gets
+smaller the hollow is filled to a flat just above the water, a lake that
+silted up. Where it gets bigger the bank is dug out, and any low ground at
+its new edge is raised to hold the water in. `mmb check` lists every lake's
+middle and size, to write a resize against.
+
+## Locking modules together
+
+A **cam lock** on every side (`lib/joint.js`, `lib/cam.js`). Either side of
+the port, 50 mm out, every side has a cam housing and a key pocket. Walking
+round a shared seam the two modules run opposite ways, so one module's cam
+always meets the other's key, whichever two modules they are.
+
+- **The key** is flat and 4 mm thick. A pad sits in a pocket in one
+  module's underside, a neck runs out through its face, and a round head
+  sticks out into the other module.
+- **The cam** is an 18 mm cylinder in a bore through the other module, as
+  tall as that side's rim. Its bottom is hollowed into a spiral. A quarter
+  turn with a coin draws the key's head 1.5 mm toward its axis, with a 10°
+  dwell at the end so it holds. That pulls the pad onto the shoulder of its
+  pocket and the faces together, with 0.2 mm of preload.
+- **Assembly.** Every pocket and entry channel is open at the bottom, so
+  modules are lowered over keys lying on the table, from any side at once.
+  Then the cams drop in from the top, slot pointing at the seam, and turn.
+  The ground round each cam is a small terrace at the rim's height, so the
+  cam sits flush. To take one module out, lift its cams and the neighbours'
+  cams on its sides.
+
+Print one key per pocket and one cam per housing; the editor and `mmb build`
+write `keys.stl` and `cams.stl`. A feature that would cut too thin, or into
+a tube bore, is left out whole and reported.
+
+## Spacer plates
+
+Not part of a module: plates are there to print when you want them, in 10,
+20, 30, 40 or 50 mm (`lib/plate.js`).
+
+```bash
+node bin/mmb.mjs plate --height 10,20,30,40   # plate-10.stl ... and pins.stl
+node bin/mmb.mjs build module.json --out out/ --plates 10,20
+```
+
+- **A milk carton, not a brick.** An open-bottom shell with a 2 mm top
+  skin, 2.4 mm walls and ribs on a 40 mm grid, solid only in the corners and
+  under the locks: 61% hollow. Printed upside down, skin on the bed, it needs
+  no support.
+- **Holes for fountain tubing** through the skin, 16 mm on a 20 mm grid, so a
+  12.7 mm tube anywhere on that grid goes straight down the stack. 72 of the
+  100 grid positions have one; the rest are too near a lock or a socket.
+- **The same cam lock** on its sides as a module, so a plate locks to
+  whatever stands beside it at its level.
+- **Stacking.** A socket in each corner of both faces, in the same four
+  places a module's underside has them, and a loose pin (`pins.stl`) for
+  each. Nothing stands proud of either face.
+
 ## The rest of the module
 
 Everything that was already here still is, per module rather than per map.
@@ -193,11 +302,6 @@ Everything that was already here still is, per module rather than per map.
 - **Woods** (`lib/canopy.js`): conifer spires and broadleaf cauliflower,
   placed and stamped, with a treeline in module millimetres. No tree ever
   crosses the rim.
-- **Seam keys** (`lib/joint.js`): a dog-bone key dropped into a recess cut
-  into the underside, not glued, a slip fit. Every edge gets its recesses at
-  the same positions, mirrored about the middle of the side, so the half on
-  one module's east edge meets the half on any module's west edge. Where the
-  plate runs thin the recess is refused whole, never cut short.
 - **Edits by hand** (`lib/edits.js`): raise, lower, smooth, flatten, plant
   and clear, kept as strokes and replayed every time the module grows, so a
   new seed keeps them. The last 12 mm of the rim is locked.
@@ -213,7 +317,7 @@ Four stages over one spec, the spec being the document:
 | **Draw** | the module flat, with its margin round it. Channel, Water, Spring, Ridge, Volcano, Flat, Wood. Every tool writes the spec; a hillshade of the ground without its ice lies under the grid while you draw |
 | **Grow** | runs the generator in a worker, then stands the module up in 3D as it will print, water in its channels and lakes |
 | **Refine** | brushes on the grown ground in 3D: raise, lower, smooth, flatten, paint water, plant, clear, a spring. Every stroke is kept as an edit and the module grows again with it, keeping the ice from last time |
-| **Print** | the report and the files: the module's STL, its keys, the tray |
+| **Print** | the report and the files: the module's STL, its keys and cams, the tray, and spacer plates if wanted |
 
 The **Channel** tool is a drag: start or finish on a port mark — the middle
 of a side — to cross the rim there, or anywhere within 30 mm of a side, and
@@ -242,7 +346,8 @@ south-west corner. A point may be outside 0..200: that is the margin.
              "place": [{ "atMM": [60, 140] }, { "pathMM": [[30, 40], [70, 60]], "radiusMM": 12 }] },
   "fountains": { "auto": true, "tubeOdMM": 12.7, "poolRadiusMM": 16, "place": [{ "atMM": [150, 150] }] },
   "edits": [{ "op": "raise", "path": [[30, 45], [90, 45]], "radiusMM": 12, "mm": 8 }],
-  "contract": { "tileMM": 200, "edgeLandMM": 22, "portWidthMM": 30, "channelDepthMM": 10 }
+  "contract": { "tileMM": 200, "edgeLandMM": 22, "edges": { "N": 42 }, "blends": { "N": 6 },
+                "portWidthMM": 30, "channelDepthMM": 10 }
 }
 ```
 
@@ -254,7 +359,7 @@ version of this is `lib/example.js`.
 ## Layout
 
 ```
-lib/contract.js    the edge contract: the rim, the port, the ) cross-section
+lib/contract.js    the edge contract: the classes, the port, the ) cross-section, the groove
 lib/channel.js     channels: snapping to ports, routing down the valley, the floor, the carve
 lib/tile.js        metres to millimetres: cut from the world, leaned onto the rim, squeezed
 lib/build.js       buildWorld (uplift, ice, gravity) and buildTile (the module)
@@ -264,7 +369,9 @@ lib/hillslope.js   critical-angle failure, and creep
 lib/basins.js      closed hollows, by priority-flood
 lib/lake.js        tarns, lakes placed and painted
 lib/fountain.js    spring pools, tube bores, and the tray
-lib/joint.js       dog-bone keys, their recesses, and the ear clipper
+lib/joint.js       the cam lock: where it goes, cutting it into a module, the key
+lib/cam.js         the cam: its spiral hollow, its coin slot, as a closed solid
+lib/plate.js       the spacer plates and their pins
 lib/canopy.js      woods
 lib/edits.js       edits by hand, kept as operations and replayed
 lib/mesh.js        height field -> closed solid, with bores and a watertightness check
@@ -301,7 +408,6 @@ The ones that earn their keep:
 - a channel is cut the contract's depth below the ground along its line,
   only ever cuts, snaps an end near a side to its port, and leaves the port
   exactly on the contract whatever its own width and depth
-- a channel drawn over a rise is reported as climbing; one on the flat is not
 - a routed channel follows the valley the glacier left, will not climb a
   ridge to save distance, meanders on a floodplain and stays put in a gorge
 - the module is cut from the middle of its world; a plane tilt leaves the
@@ -311,8 +417,18 @@ The ones that earn their keep:
   climate that would otherwise have left ice in the valley; with the melt
   off, it does
 - till conserves mass, with the melt's outwash counted
-- every edge gets the same recesses, mirrored about its middle, so any two
-  modules' halves meet
+- every side has its own class; a side of a class mates with any side of
+  that class, and a corner between two classes steps
+- every port is rebated for silicone at the seam
+- a channel's floor never rises: over a rise it cuts a gorge, and a line
+  that goes below its exit port's floor ponds behind it, and says so
+- a lake resized by hand comes out the size asked for; one filled in is dry
+- every side gets a cam and a key, mirrored about its middle, so any two
+  modules' halves meet; the turn ends tight, with preload; the cam and the
+  key agree on where the head is
+- the cam, the key, the plates and the pins are closed solids; a plate is
+  mostly hollow, flat on both faces, and has its holes where every other
+  plate has them
 - the example can be drawn from a blank module with the tools alone, in node
   and in Chromium with the mouse, the JSON never opened
 - a channel drawn with the mouse snaps its ends to the ports and takes the
@@ -327,20 +443,25 @@ The ones that earn their keep:
 
 ## Status
 
-Working and tested end to end: the contract, the channels drawn and routed,
-the module cut and leaned onto its rim, the ice carving and melting out,
-lakes, springs, woods, keys, hand edits, the editor's four stages, the CLI.
+Working and tested end to end: the edge classes, the channels drawn and
+routed with the gorge rule, the silicone groove, the module cut and leaned
+onto its rims, the ice carving and melting out, lakes and their resizing,
+springs, woods, the cam lock, the spacer plates, hand edits, the editor's
+four stages, the CLI.
+
+Not yet printed: the cam lock's clearances are a first guess and want a test
+print of `key-one.stl` and `cam-one.stl`.
 
 Under-tuned, as before: glacial U-widening (`valleyForm` is the metric,
 `elaM` and `erosionK` the levers), and now also how hard the ice may dig
 relative to a 22 mm rim — a trough deeper than the rim has room for comes
-out as a lake behind the port, which is physics, and more of it than a
-200 mm module always wants.
+out as a lake behind the port. The lakes are kept on purpose; resize the
+ones you do not want that big.
 
 Two design documents in `docs/` pre-date the one-module model and say so at
-the top: a staged pipeline, and telling the ice where to go. The judgment
-calls made in the one-module refactor that may want revisiting are listed in
-[`docs/open-questions.md`](docs/open-questions.md).
+the top: a staged pipeline, and telling the ice where to go. The questions
+from the one-module refactor, their answers and what was built for them are
+in [`docs/open-questions.md`](docs/open-questions.md).
 
 ## Licence
 
