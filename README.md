@@ -338,7 +338,9 @@ out as a lake behind the port, which is physics, and more of it than a
 200 mm module always wants.
 
 Two design documents in `docs/` pre-date the one-module model and say so at
-the top: a staged pipeline, and telling the ice where to go.
+the top: a staged pipeline, and telling the ice where to go. The judgment
+calls made in the one-module refactor that may want revisiting are listed in
+[`docs/open-questions.md`](docs/open-questions.md).
 
 ## Licence
 
