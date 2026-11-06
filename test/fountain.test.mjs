@@ -62,6 +62,83 @@ test('the bore is round, not a staircase', () => {
   assert.ok(onWall > 100, `expected a ring of vertices exactly on the circle, found ${onWall}`);
 });
 
+/** Signed volume of a closed mesh: positive when its normals point out. */
+const volume = (tris) => {
+  let v = 0;
+  for (let o = 0; o < tris.length; o += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = tris.subarray(o, o + 9);
+    v += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+  }
+  return v / 6;
+};
+
+/** The heights at which a vertical line through (x, y) crosses the surface. */
+const crossings = (tris, x, y) => {
+  const out = [];
+  for (let o = 0; o < tris.length; o += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = tris.subarray(o, o + 9);
+    const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+    if (Math.abs(d) < 1e-12) continue; // a wall, edge on
+    const l1 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d;
+    const l2 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d;
+    const l3 = 1 - l1 - l2;
+    if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+    out.push(l1 * az + l2 * bz + l3 * cz);
+  }
+  return out.sort((p, q) => p - q);
+};
+
+test('a blind bore is a closed hole up from the underside to its depth, and leaves the top whole', () => {
+  const f = makeField(81, 81, 1);
+  f.values.fill(20);
+  const bore = { x: 40.3, y: 39.6, rMM: 8, blindMM: 6 };
+  const tris = meshTile(f, { bores: [bore] });
+  const w = checkWatertight(tris);
+  assert.ok(w.watertight, `${w.unpaired} unpaired, ${w.overused} overused`);
+  // The top is all there: its triangles cover the whole module.
+  let top = 0;
+  for (let o = 0; o < tris.length; o += 9) {
+    if (tris[o + 2] !== 20 || tris[o + 5] !== 20 || tris[o + 8] !== 20) continue;
+    top += Math.abs((tris[o + 3] - tris[o]) * (tris[o + 7] - tris[o + 1]) - (tris[o + 4] - tris[o + 1]) * (tris[o + 6] - tris[o])) / 2;
+  }
+  assert.ok(Math.abs(top - 80 * 80) < 1e-6, `top covers ${top} mm²`);
+  // Inside the circle, a line up through the module meets the roof of the
+  // hole and then the top: empty from 0 to 6, solid from 6 to 20.
+  for (const [x, y] of [[40.31, 39.62], [45.1, 41.3], [36.27, 35.41]]) assert.deepEqual(crossings(tris, x, y).map((v) => +v.toFixed(6)), [6, 20], `at ${x},${y}`);
+  // Outside it, solid all the way.
+  for (const [x, y] of [[10.2, 10.3], [40.3, 49.2], [52.33, 40.71]]) assert.deepEqual(crossings(tris, x, y).map((v) => +v.toFixed(6)), [0, 20], `at ${x},${y}`);
+  // And the volume taken out is the polygon of the circle, 6 mm tall.
+  const n = 48;
+  const disc = (n / 2) * bore.rMM * bore.rMM * Math.sin((2 * Math.PI) / n);
+  const want = 80 * 80 * 20 - disc * bore.blindMM;
+  assert.ok(Math.abs(volume(tris) - want) < 0.05, `volume ${volume(tris).toFixed(3)}, wanted ${want.toFixed(3)}`);
+});
+
+test('a blind bore stays closed where a channel cut into the underside runs into it', () => {
+  // The cam's entry channel: cut up into the floor field to the bore's own
+  // depth, from the side of the module to the bore's axis. Where it meets
+  // the circle the shaft has no height at all.
+  for (const step of [1, 0.9, 2.5]) {
+    const n = Math.round(80 / step) + 1;
+    const f = makeField(n, n, 80 / (n - 1));
+    f.values.fill(20);
+    const floor = new Float64Array(n * n);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      if (Math.abs(j * f.step - 40) <= 4.5 && i * f.step >= 40) floor[j * n + i] = 6;
+    }
+    const tris = meshTile(f, { floor, bores: [{ x: 40, y: 40, rMM: 9.3, blindMM: 6 }, { x: 15, y: 68, rMM: 6.75 }] }); // their blocks clear at every step
+    const w = checkWatertight(tris);
+    assert.ok(w.watertight, `step ${step}: ${w.unpaired} unpaired, ${w.overused} overused`);
+    assert.ok(volume(tris) > 0, 'facing out');
+    // No triangle is folded over: on the shaft, nothing goes below its floor.
+    for (let o = 0; o < tris.length; o += 9) {
+      for (let a = 2; a < 9; a += 3) assert.ok(tris[o + a] >= 0 && tris[o + a] <= 20);
+    }
+    // Under the channel, beside the bore, a line up meets the channel's roof.
+    assert.deepEqual(crossings(tris, 70.13, 40.2).map((v) => +v.toFixed(6)), [6, 20]);
+  }
+});
+
 test('a spring is a pool with a lip and one notch in it', () => {
   const f = slope();
   const s = carveSpring(f, { atMM: [100, 100], spillToward: 0 });
@@ -133,4 +210,41 @@ test('the tray is a closed tub the map can sit down into', () => {
   // There is a floor, a ledge and a wall: three distinct heights.
   const heights = new Set(Array.from(t.field.values).map((v) => v.toFixed(3)));
   assert.ok(heights.size >= 3, `expected floor, ledge and wall, got ${heights.size} levels`);
+});
+
+test('a chamber is a room under a screened lid whose top is the ground; the screen opens twice the tube\'s bore and none of it is over the jet', async () => {
+  const { carveChamber, lidSolid, FOUNTAIN_DEFAULTS: FD } = await import('../lib/fountain.js');
+  const { meshMasked } = await import('../lib/mesh.js');
+  const f = makeField(201, 201, 1);
+  fill(f, (x) => 30 + 0.15 * x); // a hillside
+  const before = Float64Array.from(f.values);
+  const r = carveChamber(f, { atMM: [100, 100] });
+  assert.equal(r.kind, 'chamber');
+  assert.ok(r.openRatio >= 2, `opens ${r.openRatio.toFixed(2)}x the bore`);
+  const jet = FD.tubeIdMM / 2 + FD.jetClearMM;
+  for (const [hx, hy] of r.lid.holes) assert.ok(Math.hypot(hx, hy) >= jet + FD.holeMM / 2 - 1e-9, 'no hole over the jet');
+  // The lid is never thinner than asked, and its top is the ground that was there.
+  let thinnest = Infinity;
+  for (const v of r.lid.top) thinnest = Math.min(thinnest, v);
+  assert.ok(thinnest >= FD.capMM - 0.05, `thinnest ${thinnest.toFixed(2)}`);
+  const lid = lidSolid(r.lid, meshMasked);
+  const w = checkWatertight(lid);
+  assert.ok(w.watertight, `${w.unpaired} unpaired`);
+  // The hole only cuts, and the ledge is where the lid sits.
+  for (let k = 0; k < f.values.length; k++) assert.ok(f.values[k] <= before[k] + 1e-9);
+  const at = (x, y) => f.values[y * 201 + x];
+  assert.ok(Math.abs(at(100 + 16, 100) - r.ledgeMM) < 1e-9, 'the ledge, near the edge of the hole');
+  assert.ok(Math.abs(at(100, 100) - r.bedMM) < 1e-9, 'the floor of the room, under the lid');
+  // And the module with the tube's bore through it is a closed solid.
+  assert.ok(checkWatertight(meshTile(f, { bores: [r.bore] })).watertight);
+});
+
+test('a chamber is refused where there is no ground to roof it, or no room at the rim', async () => {
+  const { carveChamber } = await import('../lib/fountain.js');
+  const thin = makeField(201, 201, 1);
+  thin.values.fill(5);
+  assert.match(carveChamber(thin, { atMM: [100, 100] }).skipped, /not enough ground/);
+  const ok = makeField(201, 201, 1);
+  ok.values.fill(30);
+  assert.match(carveChamber(ok, { atMM: [8, 100] }).skipped, /rim/);
 });

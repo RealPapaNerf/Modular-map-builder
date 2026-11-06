@@ -177,7 +177,7 @@ test('on a real build every carved cell is drawn as something, and the channel r
   const spec = {
     seed: 3, meshMM: 5, glacier: false, worldGrid: 48,
     channels: [{ name: 'c', widthMM: 30, path: [[0, 100], [200, 100]] }],
-    fountains: { auto: true },
+    fountains: { auto: true, kind: 'pool' }, // the pool's lip is what this checks; a chamber shows its lid, which is ground
     lakes: { fillHollows: false, place: [{ atMM: [100, 160], radiusMM: 18 }] },
     canopy: [{ kind: 'conifer', density: 0.5 }],
   };

@@ -144,10 +144,11 @@ await step('the module\'s numbers go in through the inspector', async () => {
   await nothingSelected();
   await field('Name', 'hanging-valley');
   await field('Seed', 7);
-  await field('Margin', 100);
+  await field('Margin', 60);
+  await field('verticalExaggeration', 2);
   await field('Mountains', 60);
   await field('Ridge width', 95);
-  await field('Cycles', 30);
+  await field('Cycles', 24);
   await field('Snowline swing', 18);
   await field('Default rim', 22);
   let s = await spec();
@@ -160,13 +161,14 @@ await step('the module\'s numbers go in through the inspector', async () => {
   await page.click('#inspector [data-field="side.N.blend"] button >> text="cliff"');
   await page.waitForTimeout(60);
   assert.deepEqual((await spec()).contract.blends, { N: 6 });
-  await page.click('#inspector [data-field="side.N.blend"] button >> text="slope"');
+  await page.click('#inspector [data-field="side.N.blend"] button >> text="auto"');
   await page.click('#inspector [data-field="side.N.class"] button >> text="20"');
   await page.waitForTimeout(60);
   s = await spec();
   assert.equal(s.contract.edges, undefined);
   assert.equal(s.contract.blends, undefined);
-  assert.deepEqual(s.glacier, { cycles: 30, elaSwingMM: 18 });
+  assert.deepEqual(s.glacier, { cycles: 24, elaSwingMM: 18 });
+  assert.equal(s.verticalExaggeration, 2);
   assert.equal(s.spineWidthMM, 95);
 });
 
@@ -183,6 +185,26 @@ await step('the ridge is drawn across the module and out into the margin, snappe
   s.spine.forEach(([x, y], i) => { assert.ok(Math.abs(x - EXAMPLE_SPEC.spine[i][0]) <= 5 && Math.abs(y - EXAMPLE_SPEC.spine[i][1]) <= 5, `point ${i}`); });
   // Then typed exactly, as the example has them.
   await page.evaluate((pts) => window.mmb.api.commit((x) => { x.spine = pts; }, 'ridge'), EXAMPLE_SPEC.spine);
+});
+
+await step('a cirque is pressed where the bowl goes and dragged the way it opens', async () => {
+  await tool('cirque');
+  for (const cq of EXAMPLE_SPEC.cirques) {
+    const a = (cq.facingDeg * Math.PI) / 180;
+    await drag([cq.at, [cq.at[0] + 25 * Math.cos(a), cq.at[1] + 25 * Math.sin(a)]]);
+  }
+  const s = await spec();
+  assert.equal(s.cirques.length, EXAMPLE_SPEC.cirques.length);
+  s.cirques.forEach((cq, i) => {
+    const want = EXAMPLE_SPEC.cirques[i];
+    assert.ok(Math.hypot(cq.at[0] - want.at[0], cq.at[1] - want.at[1]) <= 2, `cirque ${i} at ${cq.at}`);
+    const d = Math.abs(((cq.facingDeg - want.facingDeg + 540) % 360) - 180);
+    assert.ok(d <= 8, `cirque ${i} opens toward ${cq.facingDeg}, wanted ${want.facingDeg}`);
+  });
+  const panel = await page.locator('#inspector').innerText();
+  assert.match(panel, /Cirque/);
+  // Then typed exactly, as the example has them.
+  await page.evaluate((list) => window.mmb.api.commit((x) => { x.cirques = list; }, 'cirques'), EXAMPLE_SPEC.cirques);
 });
 
 await step('a channel drawn with the mouse snaps its ends to the ports and takes the palette\'s width and depth', async () => {
@@ -231,6 +253,8 @@ await step('woods, water and springs: the numbers that are numbers', async () =>
   await field('Depth', 5);
   await field('Shore', 10);
   await field('Bed', 'dish');
+  // On and off again: springs go in by hand once the module is seen.
+  await page.click('#inspector [data-field="At the start of every channel"]');
   await page.click('#inspector [data-field="At the start of every channel"]');
   await field('Tube OD', 12.7);
   await field('Pool', 16);
@@ -326,9 +350,11 @@ await step('a Raise stroke in Refine is written as an edit, shown at once, and g
   await chip(30);
   await page.waitForFunction(() => window.mmb.viewer().stats().tool === 'brush');
   const b = await page.locator('#view3d').boundingBox();
-  const a = await page.evaluate(() => window.mmb.viewer().project(60, 140, window.mmb.viewer().heightAt(60, 140)));
-  const z = await page.evaluate(() => window.mmb.viewer().project(140, 140, window.mmb.viewer().heightAt(140, 140)));
-  const heightBefore = await page.evaluate(() => window.mmb.viewer().heightAt(100, 140));
+  // On the south flank, which the camera looks at: the crest, twice as tall
+  // as the ground it was grown from, hides the north side.
+  const a = await page.evaluate(() => window.mmb.viewer().project(30, 40, window.mmb.viewer().heightAt(30, 40)));
+  const z = await page.evaluate(() => window.mmb.viewer().project(90, 40, window.mmb.viewer().heightAt(90, 40)));
+  const heightBefore = await page.evaluate(() => window.mmb.viewer().heightAt(60, 40));
   await page.mouse.move(b.x + a.x, b.y + a.y);
   await page.mouse.down();
   for (let i = 1; i <= 10; i++) { await page.mouse.move(b.x + a.x + ((z.x - a.x) * i) / 10, b.y + a.y + ((z.y - a.y) * i) / 10); await page.waitForTimeout(20); }
@@ -338,7 +364,7 @@ await step('a Raise stroke in Refine is written as an edit, shown at once, and g
   assert.equal(s.edits.length, 1);
   assert.equal(s.edits[0].op, 'raise');
   assert.equal(s.edits[0].radiusMM, 15);
-  const heightAfter = await page.evaluate(() => window.mmb.viewer().heightAt(100, 140));
+  const heightAfter = await page.evaluate(() => window.mmb.viewer().heightAt(60, 40));
   assert.ok(heightAfter > heightBefore + 2, `previewed at once: ${heightBefore.toFixed(1)} -> ${heightAfter.toFixed(1)} mm`);
   await page.waitForFunction(() => !window.mmb.state.grown.stale && !window.mmb.state.busy, null, { timeout: 120000 });
   assert.equal((await page.evaluate(() => window.mmb.state.grown.report.notes.concat(window.mmb.state.grown.report.warnings).some((m) => /edit/.test(m)))), false, 'the edit was made without complaint');

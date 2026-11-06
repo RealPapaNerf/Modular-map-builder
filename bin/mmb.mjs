@@ -12,12 +12,12 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildTile } from '../lib/build.js';
 import { writeSTL } from '../lib/stl.js';
-import { meshTile } from '../lib/mesh.js';
+import { meshTile, meshMasked } from '../lib/mesh.js';
 import { WIDTHS, EDGES } from '../lib/contract.js';
 import { renderTile, encodePNG } from '../lib/preview.js';
 import { scatterCanopy } from '../lib/canopy.js';
 import { makeField } from '../lib/field.js';
-import { trayField } from '../lib/fountain.js';
+import { trayField, lidSheet } from '../lib/fountain.js';
 import { keySheet, keySolid, usableKeys, lockSettings } from '../lib/joint.js';
 import { camSheet, camSolid, camSettings } from '../lib/cam.js';
 import { plateSolid, plateFields, describePlate, pinSheet, PLATE_HEIGHTS } from '../lib/plate.js';
@@ -142,7 +142,8 @@ if (cmd === 'canopy') {
       const ends = `${ch.from ? `in at ${ch.from}` : 'starts inside'}, ${ch.to ? `out at ${ch.to}` : 'ends inside'}`;
       console.log(`  ${ch.name.padEnd(10)} ${ch.widthMM} mm wide, ${ch.depthMM} mm deep, ${ch.lengthMM.toFixed(0)} mm long; ${ends}` +
                   `${ch.routed ? ' (routed down the valley)' : ''}; floor ${ch.startFloorMM.toFixed(1)} → ${ch.endFloorMM.toFixed(1)} mm` +
-                  `${ch.gorgeMM > 0.5 ? `, a gorge ${ch.gorgeMM.toFixed(1)} mm deeper than drawn through high ground` : ''}${ch.pondMM > 0.5 ? `, ponds ${ch.pondMM.toFixed(1)} mm behind its exit` : ''}`);
+                  `${ch.isGorge ? `, a gorge${ch.gorgeMM > 0.5 ? ` ${ch.gorgeMM.toFixed(1)} mm deeper than drawn through the ridge` : ''}` : ', a creek on the surface'}` +
+                  `${ch.pondMM > 0.5 ? `, ponds ${ch.pondMM.toFixed(1)} mm behind its exit` : ''}`);
     }
   }
 
@@ -151,11 +152,23 @@ if (cmd === 'canopy') {
     console.log(`\nCam lock: ${cams.length} cam housing(s) and ${usableKeys(r).length} key pocket(s), ${t.sockets.length} corner socket(s); ${t.keysRefused.length + t.socketsRefused.length} left out.`);
     console.log(`  An ${r.joint.camMM} mm cam, a quarter turn with a coin, draws the key's head ${r.joint.drawMM} mm and the faces together. ` +
                 `Print one key per pocket and one cam per housing, ${t.camHeights.join(', ')} mm tall.`);
+    console.log('  It all goes in from the underside: lay the modules face down, butted together, drop a key into each seam (pad in the ' +
+                'pocket, head in the next module\'s bore), drop a cam into each bore over the head, coin slot up, turn it a quarter turn, ' +
+                'and turn the map over. Nothing shows on top.');
     for (const k of [...t.keysRefused, ...t.socketsRefused]) console.log(`  ${k.id} left out: ${k.why}`);
   }
   for (const sp of t.springs) {
-    console.log(`\nSpring at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm — pool bed ${sp.bedMM.toFixed(1)} mm, spills at ${sp.spillMM.toFixed(1)} mm, ` +
-                `${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube.`);
+    const at = sp.atMM.map((v) => v.toFixed(0)).join(',');
+    if (sp.kind === 'chamber') {
+      console.log(`\nSpring at ${at} mm — a chamber ${(sp.ledgeMM - sp.bedMM).toFixed(1)} mm deep under a ${(sp.lid.radiusMM * 2).toFixed(0)} mm lid ` +
+                  `(${sp.lid.capMinMM.toFixed(1)}–${sp.lid.capMaxMM.toFixed(1)} mm thick) screened with ${sp.lid.holes.length} holes: ` +
+                  `${sp.openRatio.toFixed(1)}x the tube's bore, so the water leaves slower than it arrives. ${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube.`);
+    } else if (sp.kind === 'lake') {
+      console.log(`\nSpring at ${at} mm — the tube straight into the lake; ${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube.`);
+    } else {
+      console.log(`\nSpring at ${at} mm — pool bed ${sp.bedMM.toFixed(1)} mm, spills at ${sp.spillMM.toFixed(1)} mm, ` +
+                  `${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube.`);
+    }
   }
   if (t.lakes.length) {
     const byKind = {};
@@ -201,7 +214,8 @@ if (cmd === 'canopy') {
     const camHeights = t.keys.filter((k) => k.kind === 'cam').map((k) => k.heightMM);
     if (camHeights.length) {
       writeFileSync(join(dir, 'cams.stl'), writeSTL(camSheet(camSettings(r.joint), camHeights), 'lock cams'));
-      written.push('cams.stl');
+      writeFileSync(join(dir, 'cam-one.stl'), writeSTL(camSolid(camSettings(r.joint), camHeights[0]), 'lock cam'));
+      written.push('cams.stl', 'cam-one.stl');
     }
     const plates = flag('plates');
     if (plates && plates !== true) {
@@ -213,6 +227,11 @@ if (cmd === 'canopy') {
       written.push('pins.stl');
     }
     writeFileSync(join(dir, 'preview.png'), renderTile(t).png);
+    const lids = t.springs.filter((sp) => sp.lid).map((sp) => sp.lid);
+    if (lids.length) {
+      writeFileSync(join(dir, 'lids.stl'), writeSTL(lidSheet(lids, meshMasked), 'chamber lids'));
+      written.push('lids.stl');
+    }
     if (t.springs.length) {
       const tray = trayField(makeField, { widthMM: r.contract.tileMM, depthMM: r.contract.tileMM, ...(spec.tray || {}) });
       writeFileSync(join(dir, 'tray.stl'), writeSTL(meshTile(tray.field), 'tray'));

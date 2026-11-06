@@ -74,7 +74,7 @@ test('the world is the module and its margin, and features are in module millime
   assert.ok(Math.abs(w.worldSizeM - (T + 200) * 25) < 1e-6, '400 mm of ground at 25 m/mm');
   assert.equal(w.marginMM, 100);
   // A volcano at the middle of the module is the highest thing on a flat world.
-  const v = buildWorld({ seed: 1, worldGrid: 48, glacier: false, spineHeightMM: 0, roughness: 0, volcanoes: [{ at: [100, 100], heightMM: 40, baseRadiusMM: 60 }] });
+  const v = buildWorld({ seed: 1, worldGrid: 48, marginMM: 100, glacier: false, rivers: false, detail: false, spineHeightMM: 0, roughness: 0, volcanoes: [{ at: [100, 100], heightMM: 40, baseRadiusMM: 60 }] });
   let best = 0; let bi = 0;
   for (let k = 0; k < v.bed.values.length; k++) if (v.bed.values[k] > best) { best = v.bed.values[k]; bi = k; }
   const i = bi % v.bed.nx; const j = (bi - i) / v.bed.nx;
@@ -145,7 +145,7 @@ test('the example grows with its channel down the valley and its ice gone', { ti
   assert.equal(ch.to, 'S');
   assert.equal(ch.from, null);
   assert.ok(Math.abs(ch.endFloorMM - portFloor(r.contract)) < 1e-6);
-  assert.ok(r.tile.springs.length === 1, 'a spring at its start');
+  assert.equal(r.tile.springs.length, 0, 'no spring until one is placed: they go in once the module is seen');
 });
 
 test('sides of different classes: each rim is exact, the corners step, and a side mates with any side of its class', () => {
@@ -183,12 +183,12 @@ test('every port is rebated for silicone at the seam, and the lock is cut on eve
   assert.equal(t.keys.filter((k) => k.kind === 'cam').length, 4);
   assert.equal(t.keys.filter((k) => k.kind === 'key').length, 4);
   assert.equal(t.sockets.length, 4);
-  assert.deepEqual(t.camHeights, [22]);
+  assert.deepEqual(t.camHeights, [8.4], 'every cam the same height, in its blind bore');
   assert.ok(t.mesh.watertight);
 });
 
 test('a lake resized by hand comes out the size asked for, and a resize for a lake that is gone is said', () => {
-  const bowl = { name: 'bowl', seed: 3, meshMM: 2, worldGrid: 64, glacier: false, spineHeightMM: 0, roughness: 0, lakes: { fillHollows: true },
+  const bowl = { name: 'bowl', seed: 3, meshMM: 2, worldGrid: 64, glacier: false, rivers: false, detail: false, spineHeightMM: 0, roughness: 0, lakes: { fillHollows: true },
     volcanoes: [{ at: [100, 100], heightMM: 20, baseRadiusMM: 60, craterRadiusMM: 30, craterDepthMM: 12 }] };
   const asDug = buildTile(bowl).tile.lakes.filter((l) => l.what === 'tarn');
   assert.ok(asDug.length >= 1, 'the crater holds a tarn');

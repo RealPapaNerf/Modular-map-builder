@@ -23,9 +23,9 @@ import { writeSTL } from '../lib/stl.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
 import { camSheet, camSolid, camSettings } from '../lib/cam.js';
 import { plateSolid, pinSheet, PLATE_HEIGHTS } from '../lib/plate.js';
-import { meshTile } from '../lib/mesh.js';
+import { meshTile, meshMasked } from '../lib/mesh.js';
 import { makeField } from '../lib/field.js';
-import { trayField } from '../lib/fountain.js';
+import { trayField, lidSheet } from '../lib/fountain.js';
 import { summarise } from './summary.js';
 import { makeZip } from './zip.js';
 import { tileHeights, transferables } from './heights.js';
@@ -59,10 +59,14 @@ function manifest() {
   const cams = (t.keys || []).filter((k) => k.kind === 'cam').map((k) => k.heightMM);
   if (cams.length) {
     out.push({
-      id: 'cams', name: 'cams.stl', group: 'joinery', note: `${cams.length} cam${cams.length > 1 ? 's' : ''}, each as tall as its rim: ${[...new Set(cams)].join(', ')} mm`,
+      id: 'cams', name: 'cams.stl', group: 'joinery', note: `${cams.length} cam${cams.length > 1 ? 's' : ''}, one per housing, ${[...new Set(cams)].join(', ')} mm tall: they go in from the underside`,
       make: () => writeSTL(camSheet(camSettings(result.joint), cams), 'lock cams'),
     });
     out.push({ id: 'cam-one', name: 'cam-one.stl', group: 'joinery', note: 'a single cam, for test-fitting', make: () => writeSTL(camSolid(camSettings(result.joint), Math.min(...cams)), 'lock cam') });
+  }
+  const lids = t.springs.filter((sp) => sp.lid).map((sp) => sp.lid);
+  if (lids.length) {
+    out.push({ id: 'lids', name: 'lids.stl', group: 'module', note: `${lids.length} chamber lid${lids.length > 1 ? 's' : ''}, printed flat side down`, make: () => writeSTL(lidSheet(lids, meshMasked), 'chamber lids') });
   }
   if (t.springs.length) {
     out.push({
@@ -102,8 +106,8 @@ self.onmessage = async (ev) => {
       // ridge and the volcanoes do, before anything is grown.
       const s = { ...msg.spec, glacier: false };
       const c = makeContract(s.contract || {});
-      const w = buildWorld(s);
-      const local = cutTile(w.bed, c, { marginMM: marginOf(s, c.tileMM), metresPerMM: scaleOf(s), meshMM: 2.5 });
+      const w = buildWorld(s, () => {}, { detail: false });
+      const local = cutTile(w.bed, c, { marginMM: marginOf(s, c.tileMM), metresPerMM: scaleOf(s), meshMM: 2.5, exaggeration: w.exaggeration });
       const { rgb, width, height } = shadeTile({ local }, { px: msg.px || 256 });
       post({ type: 'estimate', key: msg.key ?? worldKey(msg.spec), preview: { rgb, width, height } }, [rgb.buffer]);
       return;
