@@ -103,6 +103,87 @@ test('the fine pass keeps the coarse shapes and makes the high ground steeper an
   assert.ok(d.detail.maxCutM > 20);
 });
 
+/** A plain at 150 m, 10 km square. */
+function plain(n = 81) {
+  const f = makeField(n, n, 10000 / (n - 1));
+  fill(f, () => 150);
+  return f;
+}
+/**
+ * Pile a hill of `hM` metres on a field, centred at (cx, cy) with radius rM.
+ * Smoothstep, not a straight cone: a cone has a kink where it meets the
+ * plain, and the fine grid's Catmull-Rom resample undershoots there, which
+ * drops the module's lowest ground a few metres and takes the snowline's
+ * datum with it. Real ground that has been through the ice has no such kink.
+ */
+function cone(f, cx, cy, rM, hM) {
+  const { nx, ny, step, values: z } = f;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const d = Math.hypot(i * step - cx, j * step - cy);
+      if (d >= rM) continue;
+      const t = 1 - d / rM;
+      z[j * nx + i] += hM * t * t * (3 - 2 * t);
+    }
+  }
+  return f;
+}
+/** Mean |laplacian| of a field inside a window in world metres: how worked the ground is. */
+function worked(f, cx, cy, rM) {
+  const { nx, ny, step, values: z, originX: ox, originY: oy } = f;
+  let sum = 0;
+  let n = 0;
+  for (let j = 1; j < ny - 1; j++) {
+    for (let i = 1; i < nx - 1; i++) {
+      if (Math.hypot(ox + i * step - cx, oy + j * step - cy) > rM) continue;
+      const k = j * nx + i;
+      sum += Math.abs(z[k] - 0.25 * (z[k + 1] + z[k - 1] + z[k + nx] + z[k - nx]));
+      n++;
+    }
+  }
+  return sum / Math.max(1, n);
+}
+
+// THE BUG THIS IS HERE FOR. The snowline used to be 0.6 of the module's
+// relief, which pins it to the highest thing on the map: put a big peak in
+// one corner and every shorter summit drops under the line and comes out of
+// the fine pass untouched -- smooth as the ice left it, beside a ridge
+// carved into towers. An absolute line cannot do that.
+test('the frost line is an absolute height: a taller peak elsewhere does not starve a shorter one', () => {
+  const opts = { tileMM: 200, marginMM: 100, metresPerMM: 25, steps: 30 };
+  const alone = detailPass(cone(plain(), 3200, 3200, 1200, 800), opts);
+  const beside = detailPass(cone(cone(plain(), 3200, 3200, 1200, 800), 7000, 7000, 1500, 3000), opts);
+
+  const extraM = beside.detail.reliefM - alone.detail.reliefM;
+  assert.ok(beside.detail.reliefM > 2.5 * alone.detail.reliefM,
+    `the second module has far more relief (${alone.detail.reliefM.toFixed(0)} m vs ${beside.detail.reliefM.toFixed(0)} m)`);
+  // The old rule would have carried the line up by 0.6 of that extra relief,
+  // which is most of a kilometre, and put the short cone under it entirely.
+  assert.ok(0.6 * extraM > 1000, `${(0.6 * extraM).toFixed(0)} m is what a relative line would have moved`);
+  const movedM = Math.abs(alone.detail.frostFromM - beside.detail.frostFromM);
+  assert.ok(movedM < 5, `the snowline did not move with it (${movedM.toFixed(1)} m)`);
+  // 10 mm of print at 25 m/mm, above the 150 m plain. Not to the metre: the
+  // fine grid's resample ripples a little where the hill meets the plain,
+  // and the lowest cell of that ripple is the datum.
+  assert.ok(Math.abs(alone.detail.frostFromM - 400) < 10, `snowline at ${alone.detail.frostFromM.toFixed(1)} m`);
+
+  const a = worked(alone, 3200, 3200, 900);
+  const b = worked(beside, 3200, 3200, 900);
+  assert.ok(a > 0.5, `the short cone is worked on its own (${a.toFixed(2)})`);
+  assert.ok(Math.abs(a - b) / a < 0.25, `and just as much with the big peak beside it (${a.toFixed(2)} vs ${b.toFixed(2)})`);
+});
+
+test('the frost line is read as print millimetres, so exaggeration moves it like every other height', () => {
+  const opts = { tileMM: 200, marginMM: 100, metresPerMM: 25, steps: 1 };
+  const one = detailPass(cone(plain(), 5000, 5000, 2000, 1500), { ...opts, exaggeration: 1 });
+  const two = detailPass(cone(plain(), 5000, 5000, 2000, 1500), { ...opts, exaggeration: 2 });
+  // Same ground, so the same lowest point: the line sits 10 mm up on both,
+  // which is 250 m of bed at 1x and 125 m at 2x. See scale.js.
+  assert.ok(Math.abs((one.detail.frostFromM - two.detail.frostFromM) - 125) < 1e-6,
+    `${one.detail.frostFromM} m at 1x, ${two.detail.frostFromM} m at 2x`);
+  assert.ok(Math.abs((one.detail.frostFullM - one.detail.frostFromM) - 350) < 1e-6, 'and the band is 14 mm wide at 1x');
+});
+
 test('a cirque seed is a hollow open toward its facing, and says where it is', () => {
   const f = makeField(101, 101, 50);
   fill(f, () => 1000);
