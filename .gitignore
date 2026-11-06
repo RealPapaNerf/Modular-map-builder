@@ -1,5 +1,5 @@
 node_modules/
-tiles/
+out/
 *.stl
 !docs/*.stl
 

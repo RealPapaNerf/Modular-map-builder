@@ -1,41 +1,31 @@
 #!/usr/bin/env node
-// mmb — build modular map tiles from a spec.
+// mmb — build one modular map module from a spec.
 //
-//   node bin/mmb.mjs build <spec.json> --out tiles/
-//   node bin/mmb.mjs check <spec.json>
-//   node bin/mmb.mjs plate --size 200 --thick 10 --out plate.stl
-//   node bin/mmb.mjs preview <spec.json> --out preview.png
-//   node bin/mmb.mjs board <spec.json>
-//   node bin/mmb.mjs example > map.json
+//   node bin/mmb.mjs example > module.json
+//   node bin/mmb.mjs check module.json          the contract and the channels, no ice
+//   node bin/mmb.mjs build module.json --out out/
+//   node bin/mmb.mjs preview module.json --out preview.png
+//   node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildMap } from '../lib/build.js';
-import { writeSTL, plateSTL } from '../lib/stl.js';
+import { buildTile } from '../lib/build.js';
+import { writeSTL } from '../lib/stl.js';
 import { meshTile } from '../lib/mesh.js';
-import { makeContract, check, SIZES, SIZE_LADDER, FALLS, sizeFor } from '../lib/contract.js';
-import { renderMap, encodePNG } from '../lib/preview.js';
-import { scatterCanopy, spacingForDensity } from '../lib/canopy.js';
+import { WIDTHS, EDGES } from '../lib/contract.js';
+import { renderTile, encodePNG } from '../lib/preview.js';
+import { scatterCanopy } from '../lib/canopy.js';
 import { makeField } from '../lib/field.js';
 import { trayField } from '../lib/fountain.js';
 import { keySheet, keySolid, usableKeys } from '../lib/joint.js';
 import { EXAMPLE_SPEC } from '../lib/example.js';
-import { migrateSpec, needsMigration } from '../lib/scale.js';
+import { isBoardSpec, BOARD_SPEC_MESSAGE } from '../lib/scale.js';
 
-/**
- * Read a spec file, bringing an old one written in world metres up to
- * millimetres on the way in. See lib/scale.js: horizontal survives exactly,
- * vertical cannot, because the old format never pinned it down.
- */
 function readSpec(path) {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
-  if (!needsMigration(raw)) return raw;
-  process.stderr.write(
-    `${path} is written in world metres. Converting to millimetres; heights will differ ` +
-    `from what that file used to print, because the old format squashed them to a relief budget.\n`);
-  return migrateSpec(raw, raw.contract?.tileMM ?? 200);
+  if (isBoardSpec(raw)) { console.error(`${path}: ${BOARD_SPEC_MESSAGE}`); process.exit(2); }
+  return raw;
 }
-import { plan as planBoard } from '../lib/board.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -44,16 +34,16 @@ const flag = (name, dflt = null) => {
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : (i >= 0 ? true : dflt);
 };
 
-
 function describe(r) {
   const lines = [];
-  lines.push(`Contract: ${r.contract.tileMM} mm tiles on ${r.contract.plateMM} mm plates, outlet at ` +
-             `${r.contract.outletZMM} mm, falls ${FALLS.join('/')} mm, seam ${r.seam.style}.`);
+  const c = r.contract;
+  lines.push(`Contract: a ${c.tileMM} mm module, rim ${c.edgeLandMM} mm high, ports ${c.portWidthMM} mm wide and ` +
+             `${(c.edgeLandMM - r.portFloorMM).toFixed(0)} mm deep in the middle of each side.`);
   for (const n of r.contractNotes) lines.push(`  ${n.severity}: ${n.message}`);
   const errs = r.problems.filter((p) => p.severity === 'error');
   const notes = r.problems.filter((p) => p.severity !== 'error');
   if (errs.length) { lines.push('', 'PROBLEMS:'); for (const p of errs) lines.push(`  error: ${p.message}`); }
-  if (notes.length) { lines.push('', 'Notes:'); for (const p of notes) lines.push(`  ${p.message}`); }
+  if (notes.length) { lines.push('', 'Notes:'); for (const p of notes) lines.push(`  ${p.severity}: ${p.message}`); }
   return { lines, errs };
 }
 
@@ -101,205 +91,98 @@ if (cmd === 'canopy') {
   console.log(`\n${out}: ${steps.length} patches, ${EXT} mm square, left to right in the order above.`);
 } else if (cmd === 'example') {
   process.stdout.write(JSON.stringify(EXAMPLE_SPEC, null, 2) + '\n');
-} else if (cmd === 'board') {
-  // What the water does on the board as the spec sets it out -- risers,
-  // turns and all -- in the sentences the editor's status strip uses. No
-  // rock is grown, so the rims are the land datum's, as the editor's are
-  // before anything has been grown; that only ever errs toward overtopping.
+} else if (cmd === 'check' || cmd === 'build' || cmd === 'preview') {
   const specPath = args[1];
-  if (!specPath) { console.error('need a spec file; try: node bin/mmb.mjs example > map.json'); process.exit(2); }
-  const p = planBoard(readSpec(specPath));
-  for (const s2 of p.sentences) console.log(`  ${s2.text}`);
-  const shown = p.seams.filter((s2) => s2.kind !== 'plane');
-  if (shown.length) {
-    console.log('\nSeams:');
-    for (const s2 of shown) {
-      const what = s2.kind === 'waterfall' || s2.kind === 'spills' ? `${s2.kind} ${Math.round(s2.dropMM)} mm`
-        : (s2.kind === 'dam' || s2.kind === 'blocked') ? `${s2.kind}, ${s2.holds === false ? `overtops at ${Math.round(s2.pondToMM)}` : `ponds to ${Math.round(s2.pondToMM ?? s2.sillMM)}`} mm`
-          : s2.kind === 'cliff' ? `cliff ${Math.round(Math.abs(s2.landStepMM))} mm`
-            : s2.backFrom ? `${s2.kind === 'spring' ? 'spring; ' : ''}${s2.backFrom} spills back out here` : s2.kind;
-      console.log(`  ${s2.tiles.join(' | ').padEnd(8)} ${what}${s2.spreads ? ', spreads' : ''}${s2.wet || s2.kind === 'dry' ? '' : ' (dry)'}`);
-    }
-  }
-  const counts = Object.entries(p.counts).filter(([, v]) => v).map(([k, v]) => `${v} ${k}`).join(', ');
-  console.log(`\n${p.placements.length} tiles on the board: ${counts || 'nothing to say'}.`);
-} else if (cmd === 'plate') {
-  const size = Number(flag('size', 200));
-  const thick = Number(flag('thick', 10));
-  const out = String(flag('out', 'plate.stl'));
-  writeFileSync(out, writeSTL(plateSTL(size, size, thick), 'plate'));
-  console.log(`${out}: ${size} x ${size} x ${thick} mm plate`);
-} else if (cmd === 'check' || cmd === 'build') {
-  const specPath = args[1];
-  if (!specPath) { console.error('need a spec file; try: node bin/mmb.mjs example > map.json'); process.exit(2); }
+  if (!specPath) { console.error('need a spec file; try: node bin/mmb.mjs example > module.json'); process.exit(2); }
   const spec = readSpec(specPath);
   if (cmd === 'check') spec.glacier = false; // check is about the contract, not the rock
   const t0 = Date.now();
-  const r = buildMap(spec, (m) => process.stderr.write(`\r${m.padEnd(40)}`));
+  const r = buildTile(spec, (m) => process.stderr.write(`\r${m.padEnd(40)}`));
   process.stderr.write('\r'.padEnd(42) + '\r');
+  const t = r.tile;
+
+  if (cmd === 'preview') {
+    const out = String(flag('out', 'preview.png'));
+    writeFileSync(out, renderTile(t, { px: Number(flag('px', 512)) }).png);
+    console.log(`${out}: the module hillshaded, in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    process.exit(0);
+  }
 
   const { lines, errs } = describe(r);
   console.log(lines.join('\n'));
 
-  console.log('\nTiles:');
-  let worstEdge = 0;
-  let leaks = 0;
-  for (const t of r.tiles) {
-    worstEdge = Math.max(worstEdge, t.edges.worst);
-    if (!t.mesh.watertight) leaks++;
-    const ports = ['N', 'E', 'S', 'W']
-      .filter((e) => t.spec.edges?.[e] && t.spec.edges[e].type !== 'land')
-      .map((e) => `${e}:${t.spec.edges[e].type === 'in' ? '>' : '<'}${sizeFor(t.spec.edges[e].size).widthMM}`)
-      .join(' ') || '-';
-    console.log(
-      `  ${t.label.padEnd(4)} ${String(t.stack.plates).padStart(2)} plates ` +
-      `(${String(t.stack.standMM).padStart(3)} mm) fall ${String(t.fallMM).padStart(2)}  ` +
-      `${ports.padEnd(20)} ${String(t.trees || 0).padStart(4)} trees ` +
-      `${(t.millilitres ? t.millilitres.toFixed(1) + 'ml' : '  -  ').padStart(7)} ` +
-      `prints ${t.bbox.size[2].toFixed(1).padStart(5)} mm, ` +
-      `edge err ${t.edges.worst.toFixed(4)}, ` +
-      `${t.mesh.watertight ? 'closed' : 'LEAKS'}`,
-    );
-  }
-  const kinds = {};
-  for (const s2 of r.seamChecks) kinds[s2.kind] = (kinds[s2.kind] || 0) + 1;
-  const interesting = r.seamChecks.filter((s2) => s2.kind !== 'plane');
-  if (interesting.length) {
-    console.log('\nSeams that are not flat:');
-    for (const s2 of interesting) {
-      const h = s2.waterStepMM != null && Math.abs(s2.waterStepMM) > 1e-6
-        ? `${Math.abs(s2.waterStepMM).toFixed(0)} mm of water`
-        : `${Math.abs(s2.landStepMM).toFixed(0)} mm of land`;
-      console.log(`  ${s2.from} ${s2.edge} to ${s2.to}: ${s2.kind.toUpperCase()}, ${h}`);
+  console.log('\nEdges:');
+  for (const e of EDGES) console.log(`  ${e}  ${t.signatures[e].padEnd(22)} err ${t.edges[e].toFixed(4)} mm`);
+  console.log(`  worst edge error ${t.edges.worst.toFixed(4)} mm — ${t.edges.worst < 1e-6 ? 'it mates' : 'it does NOT mate'}`);
+
+  if (t.channels.length) {
+    console.log('\nChannels:');
+    for (const ch of t.channels) {
+      const ends = `${ch.from ? `in at ${ch.from}` : 'starts inside'}, ${ch.to ? `out at ${ch.to}` : 'ends inside'}`;
+      console.log(`  ${ch.name.padEnd(10)} ${ch.widthMM} mm wide, ${ch.depthMM} mm deep, ${ch.lengthMM.toFixed(0)} mm long; ${ends}` +
+                  `${ch.routed ? ' (routed down the valley)' : ''}; floor ${ch.startFloorMM.toFixed(1)} → ${ch.endFloorMM.toFixed(1)} mm` +
+                  `${ch.climbMM > 0.5 ? `, climbs ${ch.climbMM.toFixed(1)} mm on the way` : ''}`);
     }
   }
-  console.log(`\nSeams: ${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}`);
-  const keyCount = r.keys.length;
-  const placed = r.tiles.reduce((a, t) => a + (t.keys || []).length, 0);
-  const refused = r.tiles.flatMap((t) => (t.keysRefused || []).map((k) => ({ tile: t.label, ...k })));
-  if (keyCount) {
-    const halves = keyCount * 2;
-    console.log(`\nSeam keys: ${keyCount} planned, ${placed} of ${halves} recesses cut.`);
+
+  if (t.keys.length || t.keysRefused.length) {
+    console.log(`\nSeam keys: ${t.keys.length} recess(es) cut in the underside, ${t.keysRefused.length} refused.`);
     console.log(`  ${r.joint.padMM} mm pad on a ${r.joint.neckMM} mm neck, ${r.joint.depthMM} mm deep, ` +
-                `${r.joint.clearanceMM} mm slip fit — NOT glued, so the map comes apart.`);
-    const byWhy = {};
-    for (const k of refused) byWhy[k.why.replace(/[\d.]+/g, 'N')] = (byWhy[k.why.replace(/[\d.]+/g, 'N')] || 0) + 1;
-    for (const [why, n] of Object.entries(byWhy)) console.log(`  ${n} half-recess(es) left out: ${why}`);
-    const bothSides = usableKeys(r);
-    console.log(`  ${bothSides.length} key(s) have both halves and will actually hold. Print that many.`);
-    // The seams that get nothing. On a map with much relief this is most of
-    // them, and it is better said than discovered on the table.
-    const stepped = r.seamChecks.filter((sc) => !r.keys.some((k) =>
-      (k.id.startsWith(`${sc.from}-${sc.edge}-`))));
-    if (stepped.length) {
-      console.log(`  ${stepped.length} seam(s) have a plate step and take no key: ` +
-                  `${stepped.map((sc) => `${sc.from}/${sc.to}`).join(', ')}.`);
-      console.log('  Those tiles are registered by the plate stack under them, not by a key.');
-    }
+                `${r.joint.clearanceMM} mm slip fit — NOT glued, so the set comes apart. Print one key per recess.`);
+    for (const k of t.keysRefused) console.log(`  ${k.id} left out: ${k.why}`);
   }
-  const springs = r.tiles.flatMap((t) => (t.springs || []).map((sp) => ({ tile: t.label, level: t.level, ...sp })));
-  if (springs.length) {
-    console.log('\nFountain:');
-    for (const sp of springs) {
-      console.log(`  ${sp.tile.padEnd(4)} spring at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm — ` +
-                  `pool bed ${sp.bedMM.toFixed(1)} mm, spills at ${sp.spillMM.toFixed(1)} mm, ` +
-                  `${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube`);
-      if (sp.level > 0) {
-        console.log(`       the ${sp.level} plate(s) under ${sp.tile} need the same hole, ` +
-                    `${(sp.bore.rMM * 2).toFixed(1)} mm at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm`);
-      }
-    }
-    const plain = r.tiles.reduce((a, t) => a + t.stack.plates, 0) - springs.reduce((a, sp) => a + sp.level, 0);
-    console.log(`  Plates: ${plain} plain, ${springs.reduce((a, sp) => a + sp.level, 0)} drilled.`);
+  for (const sp of t.springs) {
+    console.log(`\nSpring at ${sp.atMM.map((v) => v.toFixed(0)).join(',')} mm — pool bed ${sp.bedMM.toFixed(1)} mm, spills at ${sp.spillMM.toFixed(1)} mm, ` +
+                `${(sp.bore.rMM * 2).toFixed(1)} mm bore for ${sp.tubeOdMM} mm tube.`);
   }
-  const water = r.tiles.flatMap((t) => (t.lakes || []).map((l) => ({ tile: t.label, ...l })));
-  if (water.length) {
-    const ml = water.reduce((a, l) => a + l.millilitres, 0);
+  if (t.lakes.length) {
     const byKind = {};
-    for (const l of water) byKind[l.what] = (byKind[l.what] || 0) + 1;
+    for (const l of t.lakes) byKind[l.what] = (byKind[l.what] || 0) + 1;
     console.log(`\nStanding water: ${Object.entries(byKind).map(([k, v]) => `${v} ${k}${v > 1 ? 's' : ''}`).join(', ')}, ` +
-                `${ml.toFixed(1)} ml of epoxy in all.`);
-    for (const l of water.sort((a, b) => b.millilitres - a.millilitres).slice(0, 6)) {
-      console.log(`  ${l.tile.padEnd(4)} ${l.what.padEnd(10)} ${l.areaMM2.toFixed(0).padStart(6)} mm2  ` +
-                  `${l.deepestMM.toFixed(1).padStart(4)} mm deep  ${l.millilitres.toFixed(2).padStart(6)} ml` +
-                  (l.clamped ? `  (${l.clamped} cells hit the floor)` : ''));
+                `${t.millilitres.toFixed(1)} ml of epoxy in all.`);
+    for (const l of [...t.lakes].sort((a, b) => b.millilitres - a.millilitres).slice(0, 6)) {
+      console.log(`  ${l.what.padEnd(6)} ${l.areaMM2.toFixed(0).padStart(6)} mm2  ${l.deepestMM.toFixed(1).padStart(4)} mm deep  ${l.millilitres.toFixed(2).padStart(6)} ml`);
     }
   }
-  const skipped = r.tiles.flatMap((t) => (t.lakesSkipped || []).map((x) => ({ tile: t.label, ...x })));
-  for (const sk of skipped) console.log(`  ${sk.tile}: ${sk.what} not carved — ${sk.why}`);
-  const maxLevel = Math.max(...r.tiles.map((t) => t.level));
-  console.log(`\nWorst edge error across every tile: ${worstEdge.toFixed(4)} mm`);
-  console.log(`Tallest stack: ${maxLevel} plates (${maxLevel * r.contract.plateMM} mm) under the highest tile.`);
-  if (maxLevel > r.contract.maxStackPlates) {
-    console.log(`  WARNING: that is ${maxLevel * r.contract.plateMM} mm of plates before the terrain starts. ` +
-                `Gentler falls, or a shorter river, would bring it down.`);
-  }
-  console.log(`Total plates to print: ${r.tiles.reduce((a, t) => a + t.stack.plates, 0)}`);
-  if (leaks) console.log(`${leaks} tile(s) did not come out closed.`);
+  for (const sk of t.lakesSkipped) console.log(`  ${sk.what} not carved — ${sk.why}`);
+  console.log(`\nThe module: ${t.trees} trees, prints ${t.bbox.size[2].toFixed(1)} mm tall (land ${t.lowMM.toFixed(1)}–${t.highMM.toFixed(1)} mm), ` +
+              `${t.mesh.triangles.toLocaleString()} triangles, ${t.mesh.watertight ? 'closed' : 'LEAKS'}.`);
   if (r.world.glacierStats) {
     const g = r.world.glacierStats;
-    console.log(`\nIce: ELA ${g.elaM.toFixed(0)} m, ${(g.glaciatedFraction * 100).toFixed(0)}% of the map glaciated, ` +
-                `up to ${g.maxIceM.toFixed(0)} m thick, sliding to ${g.maxSlideMPerYear.toFixed(0)} m/yr, ` +
-                `cutting up to ${g.maxIncisionM.toFixed(0)} m.`);
-    if (g.runaway) console.log('  WARNING: ice is against its ceiling — this climate builds an ice cap, not valley glaciers. Raise glacier.elaM.');
+    console.log(`Ice: ELA ${g.elaM.toFixed(0)} m, ${(g.glaciatedFraction * 100).toFixed(0)}% of the world glaciated at some point, ` +
+                `up to ${g.maxIceM.toFixed(0)} m thick, cutting up to ${g.maxIncisionM.toFixed(0)} m. ` +
+                `${g.iceBeforeMeltM.toFixed(0)} m of it was left when the climate finished; it melted out in ${g.meltYears} years, ` +
+                `and ${g.finalIceM.toFixed(1)} m remains.`);
+    if (g.runaway) console.log('  WARNING: ice is against its ceiling — this climate builds an ice cap, not valley glaciers. Raise glacier.elaMM.');
   }
 
   if (cmd === 'build') {
     if (errs.length) { console.error('\nNot writing STLs while the contract is broken.'); process.exit(1); }
-    const dir = String(flag('out', 'tiles'));
+    const dir = String(flag('out', 'out'));
     mkdirSync(dir, { recursive: true });
-    for (const t of r.tiles) {
-      const f = join(dir, `${spec.name || 'map'}-${t.label}.stl`);
-      writeFileSync(f, writeSTL(t.tris, `${spec.name || 'map'} ${t.label}`));
-    }
-    writeFileSync(join(dir, 'plate.stl'),
-      writeSTL(plateSTL(r.contract.tileMM, r.contract.tileMM, r.contract.plateMM), 'plate'));
+    const name = spec.name || 'module';
+    writeFileSync(join(dir, `${name}.stl`), writeSTL(t.tris, name));
     const usable = usableKeys(r).length;
     if (usable) {
       writeFileSync(join(dir, 'keys.stl'), writeSTL(keySheet(usable, r.joint), 'seam keys'));
       writeFileSync(join(dir, 'key-one.stl'), writeSTL(keySolid(r.joint), 'seam key'));
     }
-    // A plate with a tube through it is not the same part as one without,
-    // so it gets its own file. Two plates of the same size only swap if
-    // they are drilled the same.
-    for (const t of r.tiles) {
-      if (!(t.springs || []).length || t.stack.plates === 0) continue;
-      const stepMM = 1.5;
-      const n = Math.round(r.contract.tileMM / stepMM) + 1;
-      const flat = makeField(n, n, r.contract.tileMM / (n - 1));
-      flat.values.fill(r.contract.plateMM);
-      const tris = meshTile(flat, { bores: t.springs.map((sp) => sp.bore) });
-      writeFileSync(join(dir, `plate-drilled-${t.label}.stl`), writeSTL(tris, `plate ${t.label}`));
-    }
-    const { png } = renderMap(r);
-    writeFileSync(join(dir, 'preview.png'), png);
-    // The tray the whole thing stands in, if there is a pump to stand in it.
-    if (r.tiles.some((t) => (t.springs || []).length)) {
-      let maxCol = 0;
-      let maxRow = 0;
-      for (const t of r.tiles) { maxCol = Math.max(maxCol, t.spec.col); maxRow = Math.max(maxRow, t.spec.row); }
-      const tray = trayField(makeField, {
-        widthMM: (maxCol + 1) * r.contract.tileMM,
-        depthMM: (maxRow + 1) * r.contract.tileMM,
-        ...(spec.tray || {}),
-      });
+    writeFileSync(join(dir, 'preview.png'), renderTile(t).png);
+    if (t.springs.length) {
+      const tray = trayField(makeField, { widthMM: r.contract.tileMM, depthMM: r.contract.tileMM, ...(spec.tray || {}) });
       writeFileSync(join(dir, 'tray.stl'), writeSTL(meshTile(tray.field), 'tray'));
-      console.log(`tray.stl: ${tray.outerMM.map((v) => v.toFixed(0)).join(' x ')} x ${tray.heightMM} mm, ` +
-                  `the map rests at ${tray.sitsAtMM} mm. It will need splitting for your bed.`);
+      console.log(`tray.stl: ${tray.outerMM.map((v) => v.toFixed(0)).join(' x ')} x ${tray.heightMM} mm, the module rests at ${tray.sitsAtMM} mm.`);
     }
-    console.log(`\nWrote ${r.tiles.length} tiles, plate.stl and preview.png to ${dir}/ in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    console.log(`\nWrote ${name}.stl${usable ? ', keys.stl, key-one.stl' : ''} and preview.png to ${dir}/ in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   }
 } else {
-  console.log(`mmb — modular map builder
+  console.log(`mmb — modular map builder: one module at a time
 
-  node bin/mmb.mjs example > map.json      a spec to start from
-  node bin/mmb.mjs check map.json          contract, levels and seams, no rock
-  node bin/mmb.mjs board map.json          what the water does at every seam, as set out
-  node bin/mmb.mjs build map.json --out tiles/
-  node bin/mmb.mjs plate --size 200 --thick 10 --out plate.stl
+  node bin/mmb.mjs example > module.json      a spec to start from
+  node bin/mmb.mjs check module.json          the contract and the channels, no ice
+  node bin/mmb.mjs build module.json --out out/
+  node bin/mmb.mjs preview module.json --out preview.png
   node bin/mmb.mjs canopy --kind conifer --crown 8 --out sheet.png
-  (build also writes preview.png — a hillshade of the assembled map)
 
-River sizes: ${SIZE_LADDER.map((s) => `${s.id} ${s.widthMM}mm${s.kind === 'water-body' ? ' (opening)' : ''}`).join(', ')}
-Falls per tile: ${FALLS.join(', ')} mm`);
+Channel widths the editor offers: ${WIDTHS.join(', ')} mm bank to bank; any width goes in the spec.`);
 }

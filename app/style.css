@@ -1,7 +1,7 @@
 /* style.css — one stylesheet, no framework. Light and dark both explicit.
  *
  * The canvas reads its colours from the custom properties at the bottom of
- * :root (the --c-* ones), so the board and the page change theme together. */
+ * :root (the --c-* ones), so the canvas and the page change theme together. */
 
 :root {
   color-scheme: light dark;
@@ -22,7 +22,7 @@
   --radius: 7px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* the board */
+  /* the canvas */
   --c-canvas: #e9e7e0;
   --c-grid: #d6d2c7;
   --c-land-lo: #ddd4bd;
@@ -42,6 +42,7 @@
   --c-wood: #3f8f4a;
   --c-select: #2b6cb0;
   --c-ghost: #9aa2a9;
+  --c-margin: rgba(120, 112, 96, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -79,6 +80,7 @@
     --c-wood: #6cc277;
     --c-select: #6aa6e8;
     --c-ghost: #6f777e;
+    --c-margin: rgba(255, 255, 255, 0.04);
   }
 }
 
@@ -212,14 +214,6 @@ button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chips button { padding: 2px 9px; font: 0.82rem var(--mono); }
 
-.tile-list { list-style: none; margin: 0; padding: 0; font-size: 0.84rem; }
-.tile-list li {
-  display: flex; gap: 8px; align-items: baseline; padding: 3px 6px; border-radius: 4px; cursor: pointer;
-}
-.tile-list li:hover { background: var(--panel-2); }
-.tile-list li.sel { background: var(--accent-soft); }
-.tile-list b { font-family: var(--mono); font-weight: 600; min-width: 2.6em; }
-.tile-list span { color: var(--dim); font-size: 0.78rem; }
 
 /* --------------------------------------------------------------- inspector */
 .insp h2 { margin: 0 0 2px; font-size: 1.05rem; letter-spacing: -0.01em; }
@@ -256,6 +250,8 @@ button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(
 .insp .facts { list-style: none; padding: 0; margin: 6px 0; font-size: 0.84rem; }
 .insp .facts li { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; border-bottom: 1px dashed var(--line); }
 .insp .facts li:last-child { border-bottom: 0; }
+.insp .facts li.pick { cursor: pointer; }
+.insp .facts li.pick:hover { color: var(--accent); }
 .insp .facts span:last-child { font-family: var(--mono); font-size: 0.8rem; text-align: right; }
 .insp .layer { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 8px 0; background: var(--panel-2); }
 .insp .layer-head { display: flex; align-items: center; gap: 6px; font-size: 0.84rem; font-weight: 600; }
@@ -283,8 +279,8 @@ p.hint { margin: 8px 0 0; }
 .crumbs .here { font-weight: 600; font-family: var(--mono); }
 .canvas-host { position: relative; flex: 1; min-height: 0; }
 #canvas, #view3d, #overlay3d { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
-/* One of the two views at a time: the board canvas, or the 3D one with the
-   badges drawn on a canvas over it that the pointer goes straight through. */
+/* One of the two views at a time: the flat canvas, or the 3D one with the
+   handles drawn on a canvas over it that the pointer goes straight through. */
 #overlay3d { pointer-events: none; }
 .app:not([data-three="on"]) #view3d, .app:not([data-three="on"]) #overlay3d { display: none; }
 .app[data-three="on"] #canvas { display: none; }
@@ -334,7 +330,8 @@ p.hint { margin: 8px 0 0; }
 .say .s.dam, .say .s.overtops, .say .s.blocked { color: var(--c-dam); }
 .say .s.dry { color: var(--dim); }
 .status-end { display: flex; align-items: center; gap: 6px; flex: none; }
-.rims { font-size: 0.74rem; color: var(--faint); white-space: nowrap; }
+.notes { font-size: 0.76rem; color: var(--warn); max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes:empty { display: none; }
 
 .sentences {
   position: absolute; left: 12px; right: 12px; bottom: 46px; z-index: 6;

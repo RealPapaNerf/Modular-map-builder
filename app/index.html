@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Modular map builder</title>
-<meta name="description" content="Draw a board of 3D-printable terrain tiles, see what the water does at every seam, grow it, and print it. Everything runs in your browser.">
+<meta name="description" content="Draw one 3D-printable terrain module: its ridge, the channels across it, its lakes and woods. Grow it, with glaciers that carve it and melt away, and print it. Everything runs in your browser.">
 <link rel="stylesheet" href="./style.css">
 <!-- three.js is vendored, as relief does it: the 3D view imports the bare name. -->
 <script type="importmap">
@@ -14,11 +14,11 @@
 <body>
 <noscript><p class="banner err">This editor runs in JavaScript in your browser. With it off there is nothing to show.</p></noscript>
 
-<div class="app" id="app" data-stage="draw" data-view="board">
+<div class="app" id="app" data-stage="draw">
   <header class="bar">
     <div class="brand">
       <a class="home" href="../" title="Documentation">Modular map builder</a>
-      <input id="map-name" class="map-name" aria-label="Map name" spellcheck="false" autocomplete="off">
+      <input id="map-name" class="map-name" aria-label="Module name" spellcheck="false" autocomplete="off">
     </div>
     <nav class="stages" role="tablist" aria-label="Stage">
       <button type="button" role="tab" data-stage="draw" aria-selected="true"><b>1</b> Draw</button>
@@ -30,7 +30,7 @@
       <button type="button" id="undo" class="icon" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
       <button type="button" id="redo" class="icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">&#8631;</button>
       <span class="sep" aria-hidden="true"></span>
-      <button type="button" id="new" title="An empty board: one plain tile">New</button>
+      <button type="button" id="new" title="An empty module: plain ground">New</button>
       <button type="button" id="example" title="The worked example the README explains">Example</button>
       <button type="button" id="open" title="Open a spec file">Open&hellip;</button>
       <button type="button" id="save" title="Save the spec as JSON">Save</button>
@@ -45,14 +45,14 @@
   <main class="center" id="center">
     <div class="crumbs" id="crumbs"></div>
     <div class="canvas-host" id="canvas-host">
-      <canvas id="canvas" tabindex="0" aria-label="The board. Use the tools on the left; the inspector on the right shows what is selected."></canvas>
-      <canvas id="view3d" tabindex="0" aria-label="The grown map in 3D. Drag to orbit, right-drag to pan, scroll to zoom; click a tile or a badge to inspect it."></canvas>
+      <canvas id="canvas" tabindex="0" aria-label="The module. Use the tools on the left; the inspector on the right shows what is selected."></canvas>
+      <canvas id="view3d" tabindex="0" aria-label="The grown module in 3D. Drag to orbit, right-drag to pan, scroll to zoom."></canvas>
       <canvas id="overlay3d" aria-hidden="true"></canvas>
       <div class="tip" id="tip" role="tooltip" hidden></div>
       <div class="view-ctl">
         <span class="seg view-mode" id="view-mode" role="group" aria-label="View" hidden>
-          <button type="button" data-view="2d" aria-pressed="false" title="The board, flat, with the hillshade under it">Board</button>
-          <button type="button" data-view="3d" aria-pressed="true" title="The grown map in 3D">3D</button>
+          <button type="button" data-view="2d" aria-pressed="false" title="The module, flat, with the hillshade under it">Flat</button>
+          <button type="button" data-view="3d" aria-pressed="true" title="The grown module in 3D">3D</button>
         </span>
         <button type="button" id="zoom-in" class="icon" aria-label="Zoom in" title="Zoom in">+</button>
         <button type="button" id="zoom-out" class="icon" aria-label="Zoom out" title="Zoom out">&minus;</button>
@@ -66,16 +66,12 @@
   <aside class="right" id="inspector" aria-label="Inspector"></aside>
 
   <footer class="status" id="status">
-    <div class="counts" id="counts" aria-label="What the board does"></div>
     <div class="say" id="say" aria-live="polite"></div>
     <div class="status-end">
-      <span class="rims" id="rims"></span>
-      <button type="button" id="say-all" class="mini" aria-expanded="false">All</button>
+      <span class="notes" id="notes"></span>
       <button type="button" id="json-toggle" class="mini" aria-expanded="false" aria-controls="drawer">Spec JSON</button>
     </div>
   </footer>
-
-  <div class="sentences" id="sentences" hidden></div>
 
   <section class="drawer" id="drawer" hidden aria-label="Spec JSON">
     <div class="drawer-head">
@@ -87,7 +83,7 @@
       <button type="button" id="json-copy" class="mini">Copy</button>
       <button type="button" id="json-close" class="mini">Close</button>
     </div>
-    <textarea id="spec" spellcheck="false" aria-label="Map spec as JSON"></textarea>
+    <textarea id="spec" spellcheck="false" aria-label="Module spec as JSON"></textarea>
     <p class="json-err" id="json-err" hidden></p>
   </section>
 </div>

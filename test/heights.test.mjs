@@ -1,17 +1,16 @@
-// The grown map as arrays for the 3D view: what crosses the worker boundary,
-// where the water is drawn, and the geometry built from it.
+// The grown module as arrays for the 3D view: what crosses the worker
+// boundary, where the water is drawn, and the geometry built from it.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeField } from '../lib/field.js';
-import { buildMap } from '../lib/build.js';
-import { plan } from '../lib/board.js';
+import { buildTile } from '../lib/build.js';
 import {
   tileHeights, transferables, waterSurface, groundArrays, gridIndex, wallArrays, rimLine, waterArrays,
-  proxyArrays, sampleHeight, edgeTop, groundColour, worldSpan, lockBandArrays, GROUND, RIVER, STILL, WOOD, RIVER_DEPTH_MM,
+  proxyArrays, sampleHeight, groundColour, heightSpan, lockBandArrays, GROUND, RIVER, STILL, WOOD,
 } from '../app/heights.js';
 
-/** A 5 x 5 tile, 200 mm across, standing on two plates. */
+/** A 5 x 5 module, 200 mm across. */
 function fakeTile({ values = null } = {}) {
   const local = makeField(5, 5, 50, 0, 0);
   local.values.set(values || [
@@ -22,102 +21,79 @@ function fakeTile({ values = null } = {}) {
     30, 30, 30, 30, 30,
   ]);
   const wet = new Uint8Array(25);
-  for (const k of [7, 12, 17]) wet[k] = 1; // the channel down the middle
+  const water = new Float32Array(25).fill(NaN);
+  for (const k of [7, 12, 17]) { wet[k] = 1; water[k] = 13; } // the channel down the middle, 3 mm of water in it
   const lakeWet = new Uint8Array(25);
   lakeWet[6] = 1; // a lake cell at (1, 1)
   const woodMask = new Uint8Array(25);
   woodMask[0] = 1;
-  woodMask[7] = 1; // a crown cannot stand in the river
+  woodMask[7] = 1; // a crown cannot stand in the channel
   return {
-    spec: { col: 2, row: 1 },
-    label: 'C2',
-    level: 2,
-    stack: { standMM: 20 },
-    local,
-    wet,
+    local, wet, water,
     lakes: [{ what: 'tarn', surfaceZ: 24, wet: lakeWet }, { what: 'skipped', surfaceZ: 99 }],
     springs: [{ atMM: [150, 150], poolRadiusMM: 10, spillMM: 25 }],
     woods: [{ kind: 'conifer', mask: woodMask }],
   };
 }
 
-test('a built tile crosses the boundary as Float32 heights, its standing water and what each cell is', () => {
+test('a built module crosses the boundary as Float32 heights, its water and what each cell is', () => {
   const h = tileHeights(fakeTile());
-  assert.equal(h.id, '2,1');
-  assert.equal(h.label, 'C2');
-  assert.equal(h.standMM, 20);
-  assert.equal(h.level, 2);
   assert.ok(h.heights instanceof Float32Array);
   assert.equal(h.heights.length, 25);
   assert.equal(h.heights[12], 10);
   assert.equal(h.kind[7], RIVER);
+  assert.equal(h.water[12], 13, 'the channel carries its water at the level the carve set');
   assert.equal(h.kind[6], STILL, 'a lake cell is still water');
   assert.equal(h.water[6], 24, 'at its own surface');
   assert.equal(h.kind[18], STILL, 'the spring pool at (3, 3) is still water');
   assert.equal(h.water[18], 25, 'filled to the notch in its lip');
   assert.equal(h.kind[0], WOOD);
-  assert.equal(h.kind[7], RIVER, 'a crown never turns a river cell into wood');
-  assert.ok(Number.isNaN(h.water[12]), 'running water is the board\'s to decide, not the tile\'s');
+  assert.equal(h.kind[7], RIVER, 'a crown never turns a channel cell into wood');
   assert.equal(h.kind[24], GROUND);
   const buffers = transferables(h);
   assert.equal(buffers.length, 3);
   assert.ok(buffers.every((b) => b instanceof ArrayBuffer));
 });
 
-test('every cell of the build\'s pool disc is pool or lip, never running water', () => {
-  // The build marks a pool wet as a disc of whole cells round the nearest
-  // one, wider than the pool itself. A cell of that disc left as river would
-  // be drawn at its bed plus the river's depth: a ring above the pool.
+test('every cell of the build\'s pool disc is pool or lip, never channel water', () => {
   const t = fakeTile();
   t.lakes = [];
   t.local.values[19] = 28; // (4, 3): a channel cell on the lip, above the spill
-  t.wet[19] = 1;
-  t.wet[18] = 1;
+  t.wet[19] = 1; t.water[19] = 31;
+  t.wet[18] = 1; t.water[18] = 13;
   const h = tileHeights(t);
   assert.equal(h.kind[18], STILL, 'the middle of the pool');
   assert.equal(h.kind[17], STILL, 'a channel cell in the disc, under the spill, is pool');
   assert.equal(h.water[17], 25);
-  assert.equal(h.kind[19], GROUND, 'a cell in the disc over the spill is lip, not river');
+  assert.equal(h.kind[19], GROUND, 'a cell in the disc over the spill is lip, not channel');
   assert.ok(Number.isNaN(h.water[19]));
   assert.equal(h.kind[12], RIVER, 'outside the disc the channel is still a channel');
-  const s = waterSurface(h, { running: true });
+  const s = waterSurface(h);
   for (const k of [17, 18]) assert.equal(s[k], 25, 'one surface over the whole pool');
 });
 
-test('a dry tile with no lakes has no water at all', () => {
+test('a dry module with no lakes has no water at all; a channel\'s water reaches its banks and no further', () => {
   const t = fakeTile();
   t.lakes = [];
   t.springs = [];
-  const s = waterSurface(tileHeights(t), { running: false });
-  assert.ok([...s].every((v) => Number.isNaN(v)));
+  t.water.fill(NaN);
+  assert.ok([...waterSurface(tileHeights(t))].every((v) => Number.isNaN(v)));
+  const u = fakeTile();
+  u.lakes = [];
+  u.springs = [];
+  const s = waterSurface(tileHeights(u));
+  assert.equal(s[12], 13);
+  assert.equal(s[11], 13, 'one cell round it is water too, so the channel meets its banks');
+  assert.equal(s[2], 13);
+  assert.ok(Number.isNaN(s[10]), 'and no further');
+  assert.ok(Number.isNaN(s[14]));
 });
 
-test('a river runs in its channel only when the board says the water reaches the tile', () => {
-  const t = fakeTile();
-  t.lakes = [];
-  t.springs = [];
-  const h = tileHeights(t);
-  const dry = waterSurface(h, { running: false });
-  assert.ok(Number.isNaN(dry[12]));
-  const wet = waterSurface(h, { running: true });
-  assert.equal(wet[12], 10 + RIVER_DEPTH_MM);
-  assert.equal(wet[7], 10 + RIVER_DEPTH_MM);
-  // One cell round it is water too, so the river meets its banks...
-  assert.equal(wet[11], 10 + RIVER_DEPTH_MM);
-  assert.equal(wet[2], 10 + RIVER_DEPTH_MM);
-  // ...and no further.
-  assert.ok(Number.isNaN(wet[10]));
-  assert.ok(Number.isNaN(wet[14]));
-});
-
-test('a pond fills everything under its level, and a deeper lake keeps its own surface', () => {
+test('a deeper lake keeps its own surface where two waters meet', () => {
   const t = fakeTile();
   t.lakes[0].surfaceZ = 26;
-  const h = tileHeights(t);
-  const s = waterSurface(h, { running: true, pondMM: 22 });
-  assert.equal(s[12], 22, 'the channel is under the pond');
-  assert.equal(s[8], 22, 'and so is the bank at 20');
-  assert.equal(s[6], 26, 'a lake above the pond is still at its own level');
+  const s = waterSurface(tileHeights(t));
+  assert.equal(s[6], 26);
   assert.equal(s[0], 26, 'the ring round the water takes the highest water next to it');
 });
 
@@ -130,8 +106,7 @@ test('the top surface: a vertex per sample, unit normals from the field, two cou
   for (let i = 0; i < g.index.length; i += 3) {
     const p = (v) => [g.position[v * 3], g.position[v * 3 + 1]];
     const [a, b, c] = [p(g.index[i]), p(g.index[i + 1]), p(g.index[i + 2])];
-    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    assert.ok(cross > 0, 'faces up');
+    assert.ok((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 0, 'faces up');
   }
   const sloped = groundArrays(tileHeights(fakeTile()), () => [0, 0, 0]);
   for (let k = 0; k < 25; k++) {
@@ -139,13 +114,11 @@ test('the top surface: a vertex per sample, unit normals from the field, two cou
     assert.ok(Math.abs(Math.hypot(...n) - 1) < 1e-6);
     assert.ok(n[2] > 0);
   }
-  // Down the west slope of the channel (x = 50 to 100 falls 20 to 10), the normal leans east.
-  assert.ok(sloped.normal[11 * 3] > 0);
+  assert.ok(sloped.normal[11 * 3] > 0, 'down the west slope of the channel the normal leans east');
 });
 
 test('a coarse index covers the same square with a quarter of the triangles, rim included', () => {
-  const five = gridIndex(5, 5, 2);
-  assert.equal(five.length, 2 * 2 * 6);
+  assert.equal(gridIndex(5, 5, 2).length, 2 * 2 * 6);
   const six = gridIndex(6, 6, 2);
   assert.equal(six.length, 3 * 3 * 6, 'an odd side still reaches the last sample');
   assert.ok(Math.max(...six) === 35 && Math.min(...six) === 0);
@@ -160,8 +133,7 @@ test('the walls face out and come down to the bottom of the piece; the rim is th
   for (let v = 0; v < w.position.length; v += 9) {
     const mx = (w.position[v] + w.position[v + 3] + w.position[v + 6]) / 3;
     const my = (w.position[v + 1] + w.position[v + 4] + w.position[v + 7]) / 3;
-    const out = (mx - 100) * w.normal[v] + (my - 100) * w.normal[v + 1];
-    assert.ok(out > 0, 'outward');
+    assert.ok((mx - 100) * w.normal[v] + (my - 100) * w.normal[v + 1] > 0, 'outward');
   }
   assert.ok(Math.min(...[...w.position].filter((_, i) => i % 3 === 2)) === 0);
   const rim = rimLine(h);
@@ -181,69 +153,59 @@ test('water is drawn only over cells whose four corners are wet', () => {
 });
 
 test('the pick proxy is coarse, and the sampled height is the field\'s', () => {
-  const t = fakeTile();
-  const h = tileHeights(t);
-  const p = proxyArrays(h, 3);
-  assert.equal(p.position.length / 3, 9);
+  const h = tileHeights(fakeTile());
+  assert.equal(proxyArrays(h, 3).position.length / 3, 9);
   assert.equal(sampleHeight(h, 100, 100), 10);
   assert.equal(sampleHeight(h, 75, 100), 15, 'bilinear between 20 and 10');
-  assert.equal(sampleHeight(h, -10, 300), 30, 'clamped to the tile');
-  assert.equal(edgeTop(h, 'N', 100), 30);
+  assert.equal(sampleHeight(h, -10, 300), 30, 'clamped to the module');
 });
 
-test('colours follow the hillshade\'s bands, and the span is in world mm', () => {
+test('colours follow the hillshade\'s bands, and the tops are rock, not snow', () => {
   const lo = groundColour(GROUND, 0);
   const hi = groundColour(GROUND, 1);
   assert.ok(lo[1] > lo[0], 'low ground is green');
-  assert.ok(hi[0] > 0.9 && hi[1] > 0.9 && hi[2] > 0.9, 'the tops are snow');
+  assert.ok(hi[0] < 0.85 && hi[1] < 0.85 && hi[2] < 0.85, 'the tops are grey-brown rock: white read as ice that was no longer there');
+  assert.ok(hi[0] >= hi[2], 'and warm, not blue');
   assert.ok(groundColour(WOOD, 0.5)[1] > groundColour(WOOD, 0.5)[0]);
-  const span = worldSpan([tileHeights(fakeTile())]);
-  assert.deepEqual(span, { lo: 30, hi: 50 });
+  assert.deepEqual(heightSpan(tileHeights(fakeTile())), { lo: 10, hi: 30 });
 });
 
-test('on a real build every carved cell is drawn as something, and the river runs where the board says', () => {
+test('on a real build every carved cell is drawn as something, and the channel runs with water in it', () => {
   const spec = {
-    cols: 2, rows: 1, seed: 3, meshMM: 5, glacier: false,
-    rivers: [{ name: 'r', size: 'creek', path: [[0, 0], [1, 0]], sourceEdge: 'W', sinkEdge: 'E' }],
+    seed: 3, meshMM: 5, glacier: false, worldGrid: 48,
+    channels: [{ name: 'c', widthMM: 30, path: [[0, 100], [200, 100]] }],
     fountains: { auto: true },
-    lakes: { place: [{ tile: 'B1', atMM: [100, 60], radiusMM: 18, surfaceZMM: 12 }] },
-    canopy: [{ kind: 'conifer', density: 0.5, tiles: ['A1'] }],
+    lakes: { fillHollows: false, place: [{ atMM: [100, 160], radiusMM: 18 }] },
+    canopy: [{ kind: 'conifer', density: 0.5 }],
   };
-  const r = buildMap(spec);
-  const board = plan(spec);
-  for (const t of r.tiles) {
-    const h = tileHeights(t);
-    assert.equal(h.heights.length, t.local.nx * t.local.ny);
-    // The cells the build marked wet round a spring pool and that stand over
-    // its spill are its lip; everything else wet is water of some kind.
-    const lip = new Set();
-    for (const sp of t.springs) {
-      const ri = Math.round(sp.atMM[0] / h.step);
-      const rj = Math.round(sp.atMM[1] / h.step);
-      const rad = Math.ceil(sp.poolRadiusMM / h.step);
-      for (let j = rj - rad; j <= rj + rad; j++) {
-        for (let i = ri - rad; i <= ri + rad; i++) {
-          const k = j * h.nx + i;
-          if (Math.hypot(i - ri, j - rj) <= rad && h.heights[k] >= sp.spillMM) lip.add(k);
-        }
+  const r = buildTile(spec);
+  const t = r.tile;
+  const h = tileHeights(t);
+  assert.equal(h.heights.length, t.local.nx * t.local.ny);
+  const lip = new Set();
+  for (const sp of t.springs) {
+    const ri = Math.round(sp.atMM[0] / h.step);
+    const rj = Math.round(sp.atMM[1] / h.step);
+    const rad = Math.ceil(sp.poolRadiusMM / h.step);
+    for (let j = rj - rad; j <= rj + rad; j++) {
+      for (let i = ri - rad; i <= ri + rad; i++) {
+        const k = j * h.nx + i;
+        if (Math.hypot(i - ri, j - rj) <= rad && h.heights[k] >= sp.spillMM) lip.add(k);
       }
     }
-    for (let k = 0; k < h.kind.length; k++) if (t.wet[k] && !lip.has(k)) assert.notEqual(h.kind[k], GROUND, `${t.label} cell ${k} is wet`);
-    for (const k of lip) assert.notEqual(h.kind[k], RIVER, `${t.label} cell ${k} is the pool's lip, not river`);
-    for (const l of t.lakes) {
-      if (!l.wet) continue;
-      // Float32 on the way across: a few millionths of a millimetre.
-      for (let k = 0; k < h.kind.length; k++) if (l.wet[k]) assert.ok(h.water[k] >= l.surfaceZ - 1e-4, `${t.label} ${l.what} cell ${k}`);
-    }
-    const p = board.tiles.find((x) => x.id === h.id);
-    assert.ok(p.wet, `${t.label}: the spring feeds it`);
-    const s = waterSurface(h, { running: p.wet });
-    let runs = 0;
-    for (let k = 0; k < h.kind.length; k++) if (h.kind[k] === RIVER && !Number.isNaN(s[k])) runs++;
-    assert.ok(runs > 0, `${t.label}: its river is drawn`);
   }
-  const a1 = tileHeights(r.tiles.find((t) => t.label === 'A1'));
-  assert.ok(a1.kind.some((k) => k === WOOD), 'the wood is drawn as wood');
+  for (let k = 0; k < h.kind.length; k++) if (t.wet[k] && !lip.has(k)) assert.notEqual(h.kind[k], GROUND, `cell ${k} is wet`);
+  for (const k of lip) assert.notEqual(h.kind[k], RIVER, `cell ${k} is the pool's lip, not channel`);
+  for (const l of t.lakes) {
+    if (!l.wet) continue;
+    for (let k = 0; k < h.kind.length; k++) if (l.wet[k]) assert.ok(h.water[k] >= l.surfaceZ - 1e-4, `${l.what} cell ${k}`);
+  }
+  const s = waterSurface(h);
+  let runs = 0;
+  for (let k = 0; k < h.kind.length; k++) if (h.kind[k] === RIVER && !Number.isNaN(s[k])) runs++;
+  assert.ok(runs > 0, 'the channel is drawn with water in it');
+  assert.ok(h.kind.some((k) => k === WOOD), 'the wood is drawn as wood');
+  assert.ok(t.lakes.some((l) => l.what === 'lake'), 'the placed lake was carved');
 });
 
 test('the rim lock band covers the last 12 mm of every rim, opaque at the rim and clear where the lock ends', () => {
@@ -251,6 +213,7 @@ test('the rim lock band covers the last 12 mm of every rim, opaque at the rim an
   t.local = makeField(81, 81, 2.5, 0, 0);
   t.local.values.fill(20);
   t.wet = new Uint8Array(81 * 81);
+  t.water = new Float32Array(81 * 81).fill(NaN);
   t.lakes = [];
   t.springs = [];
   t.woods = [];
@@ -261,8 +224,6 @@ test('the rim lock band covers the last 12 mm of every rim, opaque at the rim an
   assert.equal(alpha(40, 40), 0);
   assert.ok(alpha(2, 40) > 0 && alpha(2, 40) < 0.5);
   assert.equal(alpha(5, 40), 0, '12.5 mm in is past the lock');
-  // Only the cells near the rim carry triangles: a ring five cells deep.
-  const cells = b.index.length / 6;
-  assert.equal(cells, 80 * 80 - 70 * 70);
+  assert.equal(b.index.length / 6, 80 * 80 - 70 * 70);
   assert.ok(Math.abs(b.position[(40 * 81 + 40) * 3 + 2] - 20.3) < 1e-6, 'a hair above the ground');
 });

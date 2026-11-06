@@ -1,44 +1,25 @@
-// features.js — the things drawn ON the ground, and the handles to move them.
+// features.js — the things drawn ON the module, and the handles to move them.
 //
-// Two kinds, because the generator reads them in two frames:
-//
-//   ground  the spine, volcanoes and flats belong to the WORLD and run across
-//           tiles. Stored as fractions of the whole map; drawn in board mm.
-//   tile    a lake, a spring, a wood's outline belong to ONE TILE's design,
-//           in its own millimetres. On the board they turn with the piece.
+// All in module mm, which is the one frame there is now: the ridge, the
+// volcanoes and the flats (which may run out into the margin), and the
+// channels, lakes, springs and woods (which are on the module).
 
-import { dims, toBoard, metresPerMM, parseLabel } from './specops.js';
+import { dims, channelEnds } from './specops.js';
+import { CHANNEL_DEFAULTS } from '../lib/channel.js';
 import { inPolygon, distToSegment } from './view.js';
 
-/** A design's tile-local point, as it sits on the board after `rot` quarter turns. */
-export function localToBoard(T, col, row, rot, x, y) {
-  let dx = x - T / 2;
-  let dy = y - T / 2;
-  for (let i = 0; i < (rot || 0); i++) [dx, dy] = [dy, -dx];
-  return { x: col * T + T / 2 + dx, y: row * T + T / 2 + dy };
-}
-
-/** And back: a board point to a tile's own millimetres, undoing its turn. */
-export function boardToLocal(T, col, row, rot, X, Y) {
-  let dx = X - (col * T + T / 2);
-  let dy = Y - (row * T + T / 2);
-  for (let i = 0; i < (rot || 0); i++) [dx, dy] = [-dy, dx];
-  return { x: dx + T / 2, y: dy + T / 2 };
-}
-
-const volcanoR = (spec, v) => v.baseRadiusM ?? (spec.worldSizeM || 16000) * 0.18;
-const flatR = (spec, f) => f.radiusM ?? (spec.worldSizeM || 16000) * 0.1;
+const volcanoR = (spec, v) => v.baseRadiusMM ?? dims(spec).T * 0.36;
+const flatR = (spec, f) => f.radiusMM ?? dims(spec).T * 0.2;
 
 /* ----------------------------------------------------------------- ground */
 
-/** The spine, the volcanoes and the flats. */
+/** The ridge, the volcanoes and the flats. */
 export function drawGround(ctx, st, cam, th, alpha = 1) {
   const { spec } = st;
-  const m = metresPerMM(spec);
   ctx.save();
   ctx.globalAlpha = alpha;
   if (Array.isArray(spec.spine) && spec.spine.length >= 2) {
-    const pts = spec.spine.map((p) => toBoard(spec, p));
+    const pts = spec.spine.map(([x, y]) => ({ x, y }));
     ctx.strokeStyle = th.ridge; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.beginPath();
     pts.forEach((p, i) => (i ? ctx.lineTo(cam.sx(p.x), cam.sy(p.y)) : ctx.moveTo(cam.sx(p.x), cam.sy(p.y))));
@@ -63,175 +44,183 @@ export function drawGround(ctx, st, cam, th, alpha = 1) {
     for (const p of pts) { ctx.beginPath(); ctx.arc(cam.sx(p.x), cam.sy(p.y), 4, 0, Math.PI * 2); ctx.fill(); }
   }
   for (const v of spec.volcanoes || []) {
-    const c = toBoard(spec, v.at);
+    const [cx, cy] = v.at;
     const R = volcanoR(spec, v);
-    const rx = R / m.x; const ry = R / m.y;
     ctx.strokeStyle = th.ridge; ctx.lineWidth = 1.6; ctx.setLineDash([6, 4]);
-    ctx.beginPath(); ctx.ellipse(cam.sx(c.x), cam.sy(c.y), rx * cam.s, ry * cam.s, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), R * cam.s, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]);
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.ellipse(cam.sx(c.x), cam.sy(c.y), rx * cam.s * 0.5, ry * cam.s * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
-    const cr = Math.max(4, ((v.craterRadiusM ?? 400) / m.x) * cam.s);
+    ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), R * cam.s * 0.5, 0, Math.PI * 2); ctx.stroke();
+    const cr = Math.max(4, (v.craterRadiusMM ?? 16) * cam.s);
     ctx.fillStyle = th.ridge;
-    ctx.beginPath(); ctx.arc(cam.sx(c.x), cam.sy(c.y), cr, 0, Math.PI * 2);
-    if (cr < 12) ctx.fill(); else { ctx.lineWidth = 2; ctx.stroke(); ctx.beginPath(); ctx.arc(cam.sx(c.x), cam.sy(c.y), 4, 0, Math.PI * 2); ctx.fill(); }
+    ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), cr, 0, Math.PI * 2);
+    if (cr < 12) ctx.fill(); else { ctx.lineWidth = 2; ctx.stroke(); ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), 4, 0, Math.PI * 2); ctx.fill(); }
     if (Number.isFinite(v.breachAzimuthDeg)) {
-      // The azimuth the generator reads: atan2(dy, dx) in the world, so 0 is east and 90 north.
       const a = (v.breachAzimuthDeg * Math.PI) / 180;
       ctx.strokeStyle = th.ridge; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(cam.sx(c.x), cam.sy(c.y));
-      ctx.lineTo(cam.sx(c.x + Math.cos(a) * rx * 0.55), cam.sy(c.y + Math.sin(a) * ry * 0.55)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cam.sx(cx), cam.sy(cy));
+      ctx.lineTo(cam.sx(cx + Math.cos(a) * R * 0.55), cam.sy(cy + Math.sin(a) * R * 0.55)); ctx.stroke();
     }
   }
   for (const f of spec.flats || []) {
-    const c = toBoard(spec, f.at);
+    const [cx, cy] = f.at;
     const R = flatR(spec, f);
     ctx.strokeStyle = th.ridge; ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]);
-    ctx.beginPath(); ctx.ellipse(cam.sx(c.x), cam.sy(c.y), (R / m.x) * cam.s, (R / m.y) * cam.s, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), R * cam.s, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = th.ridge;
-    ctx.fillRect(cam.sx(c.x) - 4, cam.sy(c.y) - 1.5, 8, 3);
+    ctx.fillRect(cam.sx(cx) - 4, cam.sy(cy) - 1.5, 8, 3);
   }
   ctx.restore();
 }
 
-/* ------------------------------------------------------------------- tile */
+/* --------------------------------------------------------------- channels */
 
-/** Where each tile sits and how it is turned, for the tile features. */
-function seat(st, label, overrideRot = null) {
-  const p = parseLabel(label);
-  if (!p) return null;
-  const t = st.plan?.tiles?.find((q) => q.col === p.col && q.row === p.row);
-  return { col: p.col, row: p.row, rot: overrideRot ?? (t ? t.rot : 0) };
-}
-
-/** Lakes and springs placed by hand, and woods drawn as shapes. */
-export function drawTileFeatures(ctx, st, cam, th, { alpha = 1, only = null, unturned = null } = {}) {
+/**
+ * The channels: the line as drawn, faint, and the line as it will be cut --
+ * its ends snapped to the ports -- as a band the channel's width.
+ */
+export function drawChannels(ctx, st, cam, th, { alpha = 1 } = {}) {
   const { spec } = st;
-  const { T } = dims(spec);
   ctx.save();
   ctx.globalAlpha = alpha;
-  const where = (label, x, y) => {
-    const s = seat(st, label, unturned && unturned === label ? 0 : null);
-    return s ? localToBoard(T, s.col, s.row, s.rot, x, y) : null;
-  };
+  (spec.channels || []).forEach((ch, i) => {
+    const w = Number(ch.widthMM) || CHANNEL_DEFAULTS.widthMM;
+    const sel = st.selection?.type === 'channel' && st.selection.index === i;
+    const ends = channelEnds(spec, ch);
+    const cut = ends?.pts;
+    if (cut) {
+      ctx.strokeStyle = th.waterSoft; ctx.lineWidth = Math.max(2, w * cam.s); ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+      ctx.beginPath();
+      cut.forEach((p, k) => (k ? ctx.lineTo(cam.sx(p[0]), cam.sy(p[1])) : ctx.moveTo(cam.sx(p[0]), cam.sy(p[1]))));
+      ctx.stroke();
+    }
+    if (Array.isArray(ch.path)) {
+      ctx.strokeStyle = sel ? th.select : th.water; ctx.lineWidth = sel ? 2.5 : 1.6; ctx.setLineDash(cut ? [] : [4, 4]);
+      ctx.beginPath();
+      ch.path.forEach((p, k) => (k ? ctx.lineTo(cam.sx(p[0]), cam.sy(p[1])) : ctx.moveTo(cam.sx(p[0]), cam.sy(p[1]))));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = th.water;
+      for (const p of ch.path) { ctx.beginPath(); ctx.arc(cam.sx(p[0]), cam.sy(p[1]), sel ? 4 : 2.5, 0, Math.PI * 2); ctx.fill(); }
+    } else if (cut) {
+      // Routed: no line of its own, only where it comes in and goes out.
+      ctx.strokeStyle = sel ? th.select : th.water; ctx.lineWidth = 1.2; ctx.setLineDash([3, 5]);
+      ctx.beginPath();
+      cut.forEach((p, k) => (k ? ctx.lineTo(cam.sx(p[0]), cam.sy(p[1])) : ctx.moveTo(cam.sx(p[0]), cam.sy(p[1]))));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  });
+  ctx.restore();
+}
+
+/* -------------------------------------------------------------------- on it */
+
+/** Lakes and springs placed by hand, and woods drawn as shapes. */
+export function drawTileFeatures(ctx, st, cam, th, { alpha = 1 } = {}) {
+  const { spec } = st;
+  ctx.save();
+  ctx.globalAlpha = alpha;
   (spec.canopy || []).forEach((layer) => {
     if (!Array.isArray(layer.region) || layer.region.length < 3) return;
-    for (const label of layer.tiles || []) {
-      if (only && label !== only) continue;
-      const pts = layer.region.map(([x, y]) => where(label, x, y)).filter(Boolean);
-      if (pts.length < 3) continue;
-      ctx.beginPath();
-      pts.forEach((p, i) => (i ? ctx.lineTo(cam.sx(p.x), cam.sy(p.y)) : ctx.moveTo(cam.sx(p.x), cam.sy(p.y))));
-      ctx.closePath();
-      ctx.save();
-      ctx.globalAlpha *= 0.22;
-      ctx.fillStyle = th.wood;
-      ctx.fill();
-      ctx.restore();
-      ctx.strokeStyle = th.wood; ctx.lineWidth = 1.8; ctx.stroke();
-      // A few crowns inside, so it reads as wood.
-      const c = pts.reduce((a, p) => ({ x: a.x + p.x / pts.length, y: a.y + p.y / pts.length }), { x: 0, y: 0 });
-      ctx.fillStyle = th.wood;
-      for (const [ox, oy] of [[0, 0], [-6, -4], [6, -3], [-2, 6], [5, 5]]) {
-        ctx.beginPath(); ctx.arc(cam.sx(c.x + ox), cam.sy(c.y + oy), Math.max(2, 2.2 * cam.s), 0, Math.PI * 2); ctx.fill();
-      }
+    const pts = layer.region;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(cam.sx(p[0]), cam.sy(p[1])) : ctx.moveTo(cam.sx(p[0]), cam.sy(p[1]))));
+    ctx.closePath();
+    ctx.save();
+    ctx.globalAlpha *= 0.22;
+    ctx.fillStyle = th.wood;
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = th.wood; ctx.lineWidth = 1.8; ctx.stroke();
+    const c = pts.reduce((a, p) => ({ x: a.x + p[0] / pts.length, y: a.y + p[1] / pts.length }), { x: 0, y: 0 });
+    ctx.fillStyle = th.wood;
+    for (const [ox, oy] of [[0, 0], [-6, -4], [6, -3], [-2, 6], [5, 5]]) {
+      ctx.beginPath(); ctx.arc(cam.sx(c.x + ox), cam.sy(c.y + oy), Math.max(2, 2.2 * cam.s), 0, Math.PI * 2); ctx.fill();
     }
   });
   for (const spot of spec.lakes?.place || []) {
-    if (!spot.tile || (only && spot.tile !== only) || !Array.isArray(spot.atMM)) continue;
-    const p = where(spot.tile, spot.atMM[0], spot.atMM[1]);
-    if (!p) continue;
-    const r = Math.max(5, 9 * cam.s);
+    if (Array.isArray(spot.pathMM) && spot.pathMM.length > 1) {
+      ctx.strokeStyle = th.waterSoft; ctx.lineWidth = Math.max(3, 2 * (spot.radiusMM || 10) * cam.s); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      spot.pathMM.forEach((p, i) => (i ? ctx.lineTo(cam.sx(p[0]), cam.sy(p[1])) : ctx.moveTo(cam.sx(p[0]), cam.sy(p[1]))));
+      ctx.stroke();
+      continue;
+    }
+    if (!Array.isArray(spot.atMM)) continue;
+    const [x, y] = spot.atMM;
+    const r = Math.max(5, (spot.radiusMM || 9) * cam.s);
     ctx.fillStyle = th.waterSoft;
-    ctx.beginPath(); ctx.ellipse(cam.sx(p.x), cam.sy(p.y), r * 1.3, r, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cam.sx(x), cam.sy(y), r * 1.3, r, 0, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = th.water; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.fillStyle = th.water;
-    ctx.beginPath(); ctx.arc(cam.sx(p.x), cam.sy(p.y), 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cam.sx(x), cam.sy(y), 2.5, 0, Math.PI * 2); ctx.fill();
   }
   for (const spot of spec.fountains?.place || []) {
-    if (!spot.tile || (only && spot.tile !== only) || !Array.isArray(spot.atMM)) continue;
-    const p = where(spot.tile, spot.atMM[0], spot.atMM[1]);
-    if (!p) continue;
+    if (!Array.isArray(spot.atMM)) continue;
+    const [x, y] = spot.atMM;
     const r = Math.max(4, (spec.fountains.poolRadiusMM ?? 16) * cam.s);
     ctx.strokeStyle = th.spring; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(cam.sx(p.x), cam.sy(p.y), r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cam.sx(x), cam.sy(y), r, 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = th.spring;
-    ctx.beginPath(); ctx.arc(cam.sx(p.x), cam.sy(p.y), Math.max(3, r * 0.35), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cam.sx(x), cam.sy(y), Math.max(3, r * 0.35), 0, Math.PI * 2); ctx.fill();
   }
   ctx.restore();
 }
 
 /* ---------------------------------------------------------------- handles */
 
-/**
- * Every handle a pointer can grab, in screen px. Ground handles everywhere;
- * tile handles only for `label` (the tile view's focus), unturned.
- */
-export function handles(st, cam, { label = null } = {}) {
+/** Every handle a pointer can grab, in screen px. */
+export function handles(st, cam) {
   const { spec } = st;
-  const { T } = dims(spec);
-  const m = metresPerMM(spec);
   const out = [];
-  (spec.spine || []).forEach((p, i) => {
-    const b = toBoard(spec, p);
-    out.push({ kind: 'spine', index: i, x: cam.sx(b.x), y: cam.sy(b.y), r: 8 });
-  });
+  (spec.spine || []).forEach(([x, y], i) => out.push({ kind: 'spine', index: i, x: cam.sx(x), y: cam.sy(y), r: 8 }));
   (spec.volcanoes || []).forEach((v, i) => {
-    const b = toBoard(spec, v.at);
-    const R = volcanoR(spec, v);
-    out.push({ kind: 'volcano', index: i, x: cam.sx(b.x), y: cam.sy(b.y), r: 10 });
-    out.push({ kind: 'volcano-rim', index: i, x: cam.sx(b.x + R / m.x), y: cam.sy(b.y), r: 7 });
+    const [x, y] = v.at;
+    out.push({ kind: 'volcano', index: i, x: cam.sx(x), y: cam.sy(y), r: 10 });
+    out.push({ kind: 'volcano-rim', index: i, x: cam.sx(x + volcanoR(spec, v)), y: cam.sy(y), r: 7 });
   });
   (spec.flats || []).forEach((f, i) => {
-    const b = toBoard(spec, f.at);
-    const R = flatR(spec, f);
-    out.push({ kind: 'flat', index: i, x: cam.sx(b.x), y: cam.sy(b.y), r: 9 });
-    out.push({ kind: 'flat-rim', index: i, x: cam.sx(b.x + R / m.x), y: cam.sy(b.y), r: 7 });
+    const [x, y] = f.at;
+    out.push({ kind: 'flat', index: i, x: cam.sx(x), y: cam.sy(y), r: 9 });
+    out.push({ kind: 'flat-rim', index: i, x: cam.sx(x + flatR(spec, f)), y: cam.sy(y), r: 7 });
   });
-  if (label) {
-    const p = parseLabel(label);
-    const at = (x, y) => localToBoard(T, p.col, p.row, 0, x, y);
-    (spec.lakes?.place || []).forEach((s, i) => {
-      if (s.tile !== label || !Array.isArray(s.atMM)) return;
-      const b = at(s.atMM[0], s.atMM[1]);
-      out.push({ kind: 'lake', index: i, x: cam.sx(b.x), y: cam.sy(b.y), r: 10 });
-    });
-    (spec.fountains?.place || []).forEach((s, i) => {
-      if (s.tile !== label || !Array.isArray(s.atMM)) return;
-      const b = at(s.atMM[0], s.atMM[1]);
-      out.push({ kind: 'springpoint', index: i, x: cam.sx(b.x), y: cam.sy(b.y), r: 10 });
-    });
-    (spec.canopy || []).forEach((layer, li) => {
-      if (!Array.isArray(layer.region) || !(layer.tiles || []).includes(label)) return;
-      layer.region.forEach(([x, y], vi) => {
-        const b = at(x, y);
-        out.push({ kind: 'wood-vertex', index: li, vertex: vi, x: cam.sx(b.x), y: cam.sy(b.y), r: 7 });
-      });
-      out.push({ kind: 'wood', index: li, poly: layer.region.map(([x, y]) => { const b = at(x, y); return [cam.sx(b.x), cam.sy(b.y)]; }) });
-    });
-    for (const [k, dc, dr] of [['sw', 0, 0], ['se', 1, 0], ['nw', 0, 1], ['ne', 1, 1]]) {
-      out.push({ kind: 'corner', corner: k, cc: p.col + dc, rr: p.row + dr, x: cam.sx((p.col + dc) * T), y: cam.sy((p.row + dr) * T), r: 16 });
-    }
-  }
+  (spec.channels || []).forEach((ch, i) => {
+    if (!Array.isArray(ch.path)) return;
+    ch.path.forEach(([x, y], vi) => out.push({ kind: 'channel-vertex', index: i, vertex: vi, x: cam.sx(x), y: cam.sy(y), r: 7 }));
+    out.push({ kind: 'channel', index: i, line: ch.path.map(([x, y]) => [cam.sx(x), cam.sy(y)]) });
+  });
+  (spec.lakes?.place || []).forEach((s, i) => {
+    if (!Array.isArray(s.atMM)) return;
+    out.push({ kind: 'lake', index: i, x: cam.sx(s.atMM[0]), y: cam.sy(s.atMM[1]), r: 10 });
+  });
+  (spec.fountains?.place || []).forEach((s, i) => {
+    if (!Array.isArray(s.atMM)) return;
+    out.push({ kind: 'springpoint', index: i, x: cam.sx(s.atMM[0]), y: cam.sy(s.atMM[1]), r: 10 });
+  });
+  (spec.canopy || []).forEach((layer, li) => {
+    if (!Array.isArray(layer.region)) return;
+    layer.region.forEach(([x, y], vi) => out.push({ kind: 'wood-vertex', index: li, vertex: vi, x: cam.sx(x), y: cam.sy(y), r: 7 }));
+    out.push({ kind: 'wood', index: li, poly: layer.region.map(([x, y]) => [cam.sx(x), cam.sy(y)]) });
+  });
   return out;
 }
 
-/** The handle under a screen point: the nearest point handle, then the spine, then a wood's inside. */
-export function hitHandle(list, px, py, { corners = false, spineLine = false } = {}) {
+/** The handle under a screen point: the nearest point handle, then a channel's line, then a wood's inside. */
+export function hitHandle(list, px, py) {
   let best = null;
   let bestD = Infinity;
   for (const h of list) {
-    if (h.kind === 'wood') continue;
-    if (h.kind === 'corner' && !corners) continue;
+    if (h.kind === 'wood' || h.kind === 'channel') continue;
     const d = Math.hypot(px - h.x, py - h.y);
     if (d <= h.r && d < bestD) { best = h; bestD = d; }
   }
   if (best) return best;
-  if (spineLine) {
-    const sp = list.filter((h) => h.kind === 'spine');
-    for (let i = 1; i < sp.length; i++) {
-      if (distToSegment(px, py, sp[i - 1].x, sp[i - 1].y, sp[i].x, sp[i].y) < 6) return { kind: 'spine-line', index: i };
+  for (const h of list) {
+    if (h.kind !== 'channel') continue;
+    for (let i = 1; i < h.line.length; i++) {
+      if (distToSegment(px, py, h.line[i - 1][0], h.line[i - 1][1], h.line[i][0], h.line[i][1]) < 7) return h;
     }
   }
   for (const h of list) if (h.kind === 'wood' && inPolygon(h.poly, px, py)) return h;

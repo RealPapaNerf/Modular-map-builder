@@ -234,7 +234,7 @@ test('till conserves mass: what is cut is carried, dropped or exported', () => {
   // Everything eroded became flour (exported) or till, and every metre of
   // till is either still riding on the ice or has been put down.
   const eroded = st.tillExportedM / (1 - 0.55);
-  const accounted = st.tillExportedM + st.tillDepositedM + st.tillInTransitM;
+  const accounted = st.tillExportedM + st.tillDepositedM + st.tillInTransitM + st.tillOutwashM;
   const err = Math.abs(accounted - eroded) / eroded;
   assert.ok(err < 0.02,
     `mass is leaking: cut ${eroded.toFixed(0)} m against ${accounted.toFixed(0)} m accounted (${(err * 100).toFixed(2)}%)`);
@@ -314,4 +314,40 @@ test('a snowline that swings leaves more than one ridge down the valley', () => 
   assert.ok(swinging.stats.morainedFraction > steady.stats.morainedFraction,
     `a swinging snowline should spread till over more ground: ` +
     `${(swinging.stats.morainedFraction * 100).toFixed(1)}% against ${(steady.stats.morainedFraction * 100).toFixed(1)}%`);
+});
+
+// ---------------------------------------------------------------------------
+// And then the ice goes.
+//
+// The complaint that started this: the maps still had glaciers on them. The
+// schedule ends warm, but warm is not gone, and a bed is not a landscape
+// until the ice has left it.
+// ---------------------------------------------------------------------------
+
+test('DONE WHEN: the ice melts out entirely before the bed is handed on', () => {
+  const f = alpineValley(48);
+  // A cold climate, left cold: without the melt the ice would still be
+  // sitting in the valley when the run stopped.
+  const r = glaciate(f, { elaM: 2200, cycles: 4, elaSwingM: 0 });
+  assert.ok(r.stats.iceBeforeMeltM > 20, `the schedule should have left ice behind to melt, had ${r.stats.iceBeforeMeltM.toFixed(0)} m`);
+  assert.equal(r.stats.finalIceM, 0, 'and none of it remains');
+  assert.ok(r.finalIce.values.every((v) => v === 0), 'nowhere');
+  assert.ok(r.stats.meltYears > 0, 'the melt took time, which is reported');
+  assert.ok(r.stats.maxIceM > 0, 'but the ice was there: the bed is carved, not skipped');
+});
+
+test('with the melt off, a cold climate leaves ice on the bed', () => {
+  const r = glaciate(alpineValley(48), { elaM: 2200, cycles: 4, elaSwingM: 0, meltOut: false });
+  assert.ok(r.stats.finalIceM > 20, 'this is what the maps used to show');
+  assert.equal(r.stats.meltSteps, 0);
+});
+
+test('what the ice was still carrying is let go where it is, and the mass still balances', () => {
+  const r = glaciate(alpineValley(64, 200), { elaM: 2300, cycles: 8, tillYield: 0.55 });
+  const st = r.stats;
+  assert.equal(st.tillInTransitM, 0, 'nothing rides on ice that is no longer there');
+  const eroded = st.tillExportedM / (1 - 0.55);
+  const accounted = st.tillExportedM + st.tillDepositedM + st.tillOutwashM;
+  assert.ok(Math.abs(accounted - eroded) / eroded < 0.02, `cut ${eroded.toFixed(0)} m, accounted ${accounted.toFixed(0)} m`);
+  assert.ok(st.tillAtMeltM > 0, 'the melt put something down');
 });

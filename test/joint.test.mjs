@@ -4,12 +4,11 @@ import { makeField, fill } from '../lib/field.js';
 import { makeContract } from '../lib/contract.js';
 import { meshTile, checkWatertight, boundingBox } from '../lib/mesh.js';
 import {
-  planKeys, cutRecesses, keySolid, keyOutline, keySheet, earClip,
+  edgeKeys, cutRecesses, keySolid, keyOutline, keySheet, earClip, usableKeys,
   edgeFrame, jointSettings, JOINT_DEFAULTS,
 } from '../lib/joint.js';
 
 const c = makeContract();
-const mk = (col, row, edges = {}) => [`${col},${row}`, { col, row, edges }];
 const tile = (z = 20, n = 201) => {
   const f = makeField(n, n, c.tileMM / (n - 1));
   f.values.fill(z);
@@ -61,26 +60,26 @@ test('the two halves of a key land on the same point of the seam', () => {
   assert.ok(Math.abs(ay - by) < 1e-9, 'y disagrees along the seam');
 });
 
-test('keys go only between tiles at the same plate level', () => {
-  // Two tiles a plate apart have undersides 10 mm apart and cannot share
-  // anything cut into them.
-  const tiles = new Map([mk(0, 0), mk(1, 0), mk(0, 1)]);
-  const same = planKeys(tiles, new Map([['0,0', 2], ['1,0', 2], ['0,1', 2]]), c);
-  const stepped = planKeys(tiles, new Map([['0,0', 2], ['1,0', 2], ['0,1', 5]]), c);
-  assert.ok(same.length > stepped.length, `${same.length} against ${stepped.length}`);
-  for (const k of stepped) {
-    assert.ok(!(k.a.row !== k.b.row), 'the seam with a level change should have been skipped');
+test('every edge gets the same recesses, mirrored about its middle, so any two modules meet', () => {
+  // A module is built alone. Its east edge's recess at u has to land on the
+  // next module's west edge at T - u, whichever module that turns out to be,
+  // so the set of positions on every edge is symmetric about the middle.
+  const keys = edgeKeys(c);
+  assert.equal(keys.length, 8, 'two a side on a 200 mm module at 120 mm spacing');
+  for (const e of ['N', 'E', 'S', 'W']) {
+    const us = keys.filter((k) => k.edge === e).map((k) => k.uMM).sort((p, q) => p - q);
+    assert.equal(us.length, 2);
+    assert.ok(Math.abs(us[0] + us[1] - c.tileMM) < 1e-9, `${e}: ${us} are not mirror positions`);
   }
+  assert.equal(edgeKeys(c, { spacingMM: 200 }).length, 4);
+  assert.equal(edgeKeys(c, { enabled: false }).length, 0);
+  const port = c.tileMM / 2;
+  for (const k of keys) assert.ok(Math.abs(k.uMM - port) > c.portWidthMM / 2 + 10, 'a key is never under the port in the middle of the side');
 });
 
-test('each key is planned once, from one side of the seam', () => {
-  const tiles = new Map([mk(0, 0), mk(1, 0)]);
-  const keys = planKeys(tiles, new Map([['0,0', 0], ['1,0', 0]]), c, { spacingMM: 200 });
-  assert.equal(keys.length, 1);
-  assert.equal(keys[0].a.edge, 'E');
-  assert.equal(keys[0].b.edge, 'W');
-  assert.ok(Math.abs(keys[0].a.uMM + keys[0].b.uMM - c.tileMM) < 1e-9,
-    'the two halves are mirror positions on the same seam');
+test('the keys to print are the recesses that were cut', () => {
+  assert.equal(usableKeys({ keys: [{ id: 'a' }, { id: 'b' }] }).length, 2);
+  assert.equal(usableKeys({}).length, 0);
 });
 
 test('a recess never breaks through to the map face', () => {
