@@ -62,7 +62,7 @@ export function summarise(result, { mode = 'build', spec = null } = {}) {
       usable: usableKeys(result).length,
       joint: {
         camMM: result.joint.camMM, headMM: result.joint.headMM, drawMM: result.joint.drawMM, preloadMM: result.joint.preloadMM,
-        offsetMM: result.joint.offsetMM, clearanceMM: result.joint.clearanceMM, enabled: result.joint.enabled,
+        offsetMM: result.joint.offsetMM, clearanceMM: result.joint.clearanceMM, camHeightMM: result.joint.camHeightMM, enabled: result.joint.enabled,
       },
     },
     springs: (t.springs || []).map((sp) => ({

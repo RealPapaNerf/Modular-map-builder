@@ -6,12 +6,13 @@
 // and the canvas change with it. A field left empty is a key taken out: the
 // default, as the CLI would read it.
 
-import { EDGES, WIDTHS, EDGE_CLASSES, BLENDS, makeContract, classOf, edgeLand, portFloorAt, blendOf } from '../lib/contract.js';
+import { EDGES, WIDTHS, EDGE_CLASSES, BLENDS, makeContract, classOf, edgeLand, portFloorAt } from '../lib/contract.js';
 import { CHANNEL_DEFAULTS } from '../lib/channel.js';
 import { LAKE_DEFAULTS, PROFILES } from '../lib/lake.js';
 import { FOUNTAIN_DEFAULTS } from '../lib/fountain.js';
 import { CANOPY_DEFAULTS } from '../lib/canopy.js';
 import { DEFAULT_M_PER_MM } from '../lib/scale.js';
+import { CIRQUE_DEFAULTS } from '../lib/build.js';
 import * as ops from './specops.js';
 
 const SIDE = { N: 'north', E: 'east', S: 'south', W: 'west' };
@@ -98,6 +99,7 @@ export function renderInspector(root, api) {
       case 'spine': body = spinePanel(api); break;
       case 'volcano': body = volcanoPanel(api, sel); break;
       case 'flat': body = flatPanel(api, sel); break;
+      case 'cirque': body = cirquePanel(api, sel); break;
       case 'lake': body = lakePanel(api, sel); break;
       case 'springpoint': body = springPanel(api, sel); break;
       case 'wood': body = woodPanel(api, sel); break;
@@ -137,6 +139,14 @@ function modulePanel(api) {
       num(api, 'Mountains', { get: (x) => x.spineHeightMM, set: (x, v) => { if (v === undefined) delete x.spineHeightMM; else x.spineHeightMM = v; }, unit: 'mm', step: 1, min: 0, placeholder: '60', title: 'How far the ridge stands above the low ground, on the print' }),
       num(api, 'Ridge width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.45)) }),
       num(api, 'Roughness', { get: (x) => x.roughness, set: (x, v) => { if (v === undefined) delete x.roughness; else x.roughness = v; }, step: 0.02, min: 0, max: 1, placeholder: '0.22' }),
+      num(api, 'Taller by', { get: (x) => x.verticalExaggeration, set: (x, v) => { if (v === undefined) delete x.verticalExaggeration; else x.verticalExaggeration = v; }, unit: '×', step: 0.25, min: 1, max: 4, placeholder: '1', id: 'verticalExaggeration',
+        title: 'How much taller the print stands than the ground it is grown from. Heights you type stay the heights printed; the ice and the rivers see ground this much lower, so they cut proportionally deeper. 2 to 3 makes a range read as sheer from above.' }),
+      check(api, 'Rivers cut it first', { get: (x) => x.rivers !== false, set: (x, on) => { if (on) delete x.rivers; else x.rivers = false; }, id: 'rivers',
+        title: 'Running water cuts branching valleys into the range before the ice comes; the ice then widens them into U troughs' }),
+      check(api, 'Towers and gullies', { get: (x) => x.detail !== false, set: (x, on) => { if (on) delete x.detail; else x.detail = false; }, id: 'detail',
+        title: 'A fine pass after the ice: frost opens the joints in the rock, the sound blocks between them stand as towers, and gullies run down the weak lines' }),
+      num(api, 'Joint spacing', { get: (x) => x.rock?.blockM, set: (x, v) => ops.setPath(x, 'rock.blockM', v), unit: 'm', step: 20, min: 100, placeholder: '420', id: 'rock.blockM',
+        title: 'Real metres between the cracks in the rock: about how wide a tower is' }),
     ),
     group('Ice',
       check(api, 'Glaciate', { get: (x) => x.glacier !== false, set: (x, on) => { x.glacier = on ? (x.glacier && typeof x.glacier === 'object' ? x.glacier : { cycles: 30 }) : false; } }),
@@ -199,7 +209,9 @@ function sideRow(api, c, e) {
     seg(`${SIDE[e][0].toUpperCase()}${SIDE[e].slice(1)}`, classes.map((v) => [v, String(v)]), k,
       (v) => api.commit((x) => ops.setEdgeClass(x, e, Number(v)), `${SIDE[e]} side class`), { wide: true, id: `side.${e}.class` }),
     num(api, `${SIDE[e]} class`, { get: () => k, set: (x, v) => ops.setEdgeClass(x, e, v), unit: '', step: 10, min: 10, max: 190, id: `side.${e}.classMM`, title: 'Any multiple of 10 up to 190: a side that is all mountain can stand as high as the print' }),
-    seg('Meets it', BLENDS, blendOf(c, e), (v) => api.commit((x) => ops.setEdgeBlend(x, e, v === c.rimBlendMM ? undefined : Number(v)), `${SIDE[e]} side blend`), { wide: true, id: `side.${e}.blend` }),
+    seg('Meets it', BLENDS, Number.isFinite(c.blends?.[e]) ? c.blends[e] : null,
+      (v) => api.commit((x) => ops.setEdgeBlend(x, e, v === null || v === 'null' ? undefined : Number(v)), `${SIDE[e]} side blend`),
+      { wide: true, id: `side.${e}.blend`, title: 'auto: ground above the rim meets it as a cliff, ground below slopes up to it' }),
     h('p', { class: 'hint' }, `Rim ${edgeLand(c, e)} mm${port ? `; the channel crosses at ${portFloorAt(c, e)} mm` : ''}.`));
 }
 
@@ -360,6 +372,25 @@ function flatPanel(api, sel) {
       num(api, 'Level at', { get: at('flats', i, 'elevMM'), set: put('flats', i, 'elevMM'), unit: 'mm', step: 1, placeholder: 'the ground there', id: 'f.elevMM' }),
     ),
     h('div', { class: 'row-btns' }, del('Delete flat', () => { api.commit((x) => { x.flats.splice(i, 1); ops.tidy(x); }, 'delete a flat'); api.select(null); })),
+  ];
+}
+
+function cirquePanel(api, sel) {
+  const s = api.state.spec;
+  const cq = s.cirques?.[sel.index];
+  if (!cq) throw new Error('no cirque');
+  const i = sel.index;
+  return [
+    h('h2', {}, 'Cirque'),
+    h('p', { class: 'sub' }, `At ${Math.round(cq.at[0])}, ${Math.round(cq.at[1])} mm, opening toward ${Math.round(cq.facingDeg ?? 90)}° (0 is east, 90 north).`),
+    group('Bowl',
+      num(api, 'Opens toward', { get: at('cirques', i, 'facingDeg'), set: put('cirques', i, 'facingDeg'), unit: '°', step: 15, min: 0, max: 359, placeholder: String(CIRQUE_DEFAULTS.facingDeg), id: 'cq.facingDeg', title: 'The way the bowl opens: downhill, where its glacier flows out' }),
+      num(api, 'Radius', { get: at('cirques', i, 'radiusMM'), set: put('cirques', i, 'radiusMM'), unit: 'mm', step: 1, min: 4, placeholder: String(CIRQUE_DEFAULTS.radiusMM), id: 'cq.radiusMM' }),
+      num(api, 'Starting depth', { get: at('cirques', i, 'depthMM'), set: put('cirques', i, 'depthMM'), unit: 'mm', step: 1, min: 0, placeholder: String(CIRQUE_DEFAULTS.depthMM), id: 'cq.depthMM', title: 'The hollow cut before the ice comes; the ice takes it from there' }),
+      num(api, 'Extra snow', { get: at('cirques', i, 'snowM'), set: put('cirques', i, 'snowM'), unit: 'm', step: 20, min: 0, placeholder: String(CIRQUE_DEFAULTS.snowM), id: 'cq.snowM', title: 'How much lower the snowline sits in the bowl, in real metres: drifted snow and avalanches feed it' }),
+      h('p', { class: 'hint' }, 'The ice gathers here first and bites the headwall back into the ridge. Three or four round one summit carve a horn, the way the Matterhorn was.'),
+    ),
+    h('div', { class: 'row-btns' }, del('Delete cirque', () => { api.commit((x) => { x.cirques.splice(i, 1); ops.tidy(x); }, 'delete a cirque'); api.select(null); })),
   ];
 }
 

@@ -40,7 +40,7 @@ function dragHandle(api, h, e) {
     if (!g.moved) return;
     api.live((s) => {
       switch (h.kind) {
-        case 'spine': case 'volcano': case 'flat': case 'lake': case 'springpoint':
+        case 'spine': case 'volcano': case 'flat': case 'cirque': case 'lake': case 'springpoint':
           ops.moveFeature(s, h.kind, h.index, p); break;
         case 'channel-vertex': case 'wood-vertex':
           ops.moveFeature(s, h.kind, h.index, p, h.vertex); break;
@@ -71,6 +71,7 @@ function selectionFor(h) {
     case 'spine': return { type: 'spine', vertex: h.index };
     case 'volcano': case 'volcano-rim': return { type: 'volcano', index: h.index };
     case 'flat': case 'flat-rim': return { type: 'flat', index: h.index };
+    case 'cirque': return { type: 'cirque', index: h.index };
     case 'lake': return { type: 'lake', index: h.index };
     case 'springpoint': return { type: 'springpoint', index: h.index };
     case 'wood': case 'wood-vertex': return { type: 'wood', index: h.index };
@@ -220,6 +221,38 @@ const flat = circleTool('flat', 'Flat', '▭', 'L',
   'Press and drag out a place the module should keep level: a plain, a plateau, somewhere to put a town.',
   (s, c, r) => ops.addFlat(s, c, r), 40);
 
+/**
+ * A cirque: press where the bowl should be and drag the way it opens --
+ * downhill, where its glacier will flow out. The ice gathers there first and
+ * bites the headwall back into the ridge; three or four round one peak make
+ * a horn.
+ */
+const cirque = {
+  id: 'cirque', label: 'Cirque', glyph: '◡', key: 'Q',
+  hint: 'Press where a glacier bowl should be and drag the way it opens, downhill. The ice starts there first and bites back into the ridge. Three or four round one summit carve a horn.',
+  down(api, e) {
+    const c = snap(e.pt, e.ev);
+    const g = { kind: 'cirque', c, facing: 90 };
+    g.move = (e2) => {
+      const dx = e2.pt.x - c.x;
+      const dy = e2.pt.y - c.y;
+      if (Math.hypot(dx, dy) < 3) return;
+      g.facing = (Math.atan2(dy, dx) * 180) / Math.PI;
+      const R = 16;
+      const a = (g.facing * Math.PI) / 180;
+      g.preview = { pts: [{ x: c.x, y: c.y }, { x: c.x + Math.cos(a) * R * 1.8, y: c.y + Math.sin(a) * R * 1.8 }], circle: { x: c.x, y: c.y, r: R }, color: api.theme().ridge,
+        label: { px: e2.px + 16, py: e2.py - 12, text: `opens ${Math.round(((g.facing % 360) + 360) % 360)}°` } };
+      api.redraw();
+    };
+    g.up = () => {
+      let index = -1;
+      api.commit((s) => { index = ops.addCirque(s, c, g.facing); }, 'place a cirque');
+      api.select({ type: 'cirque', index });
+    };
+    return g;
+  },
+};
+
 /** Round 10 mm steps, fine to broad; the wide end lays down a landform in one pass. */
 const BRUSH_WIDTHS = [10, 20, 30, 50, 80, 120];
 const widthChips = (api) => ({
@@ -320,7 +353,7 @@ export const REFINE_TOOLS = [
 ];
 export const REFINE_GROUPS = [['Look', ['select']], ['The ground', ['raise', 'lower', 'smooth', 'flatten']], ['On it', ['lake', 'springpoint', 'plant', 'clear']]];
 
-export const DRAW_TOOLS = [select, channel, ridge, volcano, flat, lake, springPoint, wood];
-export const DRAW_GROUPS = [['Look', ['select']], ['The water', ['channel', 'lake', 'springpoint']], ['The ground', ['ridge', 'volcano', 'flat']], ['On it', ['wood']]];
+export const DRAW_TOOLS = [select, channel, ridge, volcano, flat, cirque, lake, springPoint, wood];
+export const DRAW_GROUPS = [['Look', ['select']], ['The water', ['channel', 'lake', 'springpoint']], ['The ground', ['ridge', 'volcano', 'flat', 'cirque']], ['On it', ['wood']]];
 
 export { CHANNEL_DEFAULTS };

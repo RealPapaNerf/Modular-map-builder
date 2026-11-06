@@ -62,6 +62,27 @@ export function drawGround(ctx, st, cam, th, alpha = 1) {
       ctx.lineTo(cam.sx(cx + Math.cos(a) * R * 0.55), cam.sy(cy + Math.sin(a) * R * 0.55)); ctx.stroke();
     }
   }
+  // A cirque: the bowl as an arc open on its facing side, and an arrow out
+  // of the mouth, the way its glacier will go.
+  for (const cq of spec.cirques || []) {
+    if (!Array.isArray(cq.at)) continue;
+    const [cx, cy] = cq.at;
+    const R = (cq.radiusMM ?? 16) * cam.s;
+    const a = ((cq.facingDeg ?? 90) * Math.PI) / 180;
+    ctx.strokeStyle = th.ridge; ctx.lineWidth = 2;
+    // Canvas y runs down, so the bearing is mirrored.
+    ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), Math.max(6, R), -a + Math.PI * 0.3, -a + Math.PI * 1.7); ctx.stroke();
+    const tip = { x: cx + Math.cos(a) * (cq.radiusMM ?? 16) * 1.8, y: cy + Math.sin(a) * (cq.radiusMM ?? 16) * 1.8 };
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cam.sx(cx), cam.sy(cy)); ctx.lineTo(cam.sx(tip.x), cam.sy(tip.y)); ctx.stroke();
+    const head = 7;
+    for (const s of [0.5, -0.5]) {
+      ctx.beginPath(); ctx.moveTo(cam.sx(tip.x), cam.sy(tip.y));
+      ctx.lineTo(cam.sx(tip.x) - head * Math.cos(-a + s), cam.sy(tip.y) - head * Math.sin(-a + s)); ctx.stroke();
+    }
+    ctx.fillStyle = th.ridge;
+    ctx.beginPath(); ctx.arc(cam.sx(cx), cam.sy(cy), 3.5, 0, Math.PI * 2); ctx.fill();
+  }
   for (const f of spec.flats || []) {
     const [cx, cy] = f.at;
     const R = flatR(spec, f);
@@ -211,6 +232,9 @@ export function handles(st, cam) {
     const [x, y] = f.at;
     out.push({ kind: 'flat', index: i, x: cam.sx(x), y: cam.sy(y), r: 9 });
     out.push({ kind: 'flat-rim', index: i, x: cam.sx(x + flatR(spec, f)), y: cam.sy(y), r: 7 });
+  });
+  (spec.cirques || []).forEach((cq, i) => {
+    if (Array.isArray(cq.at)) out.push({ kind: 'cirque', index: i, x: cam.sx(cq.at[0]), y: cam.sy(cq.at[1]), r: 9 });
   });
   (spec.channels || []).forEach((ch, i) => {
     if (!Array.isArray(ch.path)) return;

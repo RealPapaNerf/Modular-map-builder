@@ -89,7 +89,9 @@ says, and a side can be any class up to 190.
   the port. The key is flat, with a round head. Its pad sits in the
   underside of one module and its head goes into the other module's cam. A
   quarter turn with a coin draws the head 1.5 mm and pulls the faces
-  together, with 0.2 mm of preload. The cam is printed as tall as its rim.
+  together, with 0.2 mm of preload. Everything is in the underside: the
+  cam sits in a blind bore 8.4 mm deep, every cam is 8.4 mm tall, and
+  nothing shows on the top.
 
 ## Still open
 
@@ -99,6 +101,43 @@ says, and a side can be any class up to 190.
 - The cam lock has not been printed. The clearances (0.3 mm slip, 0.2 mm
   preload, 1.5 mm draw) are a first guess for a 0.4 mm nozzle and want a test
   print of `key-one.stl` and `cam-one.stl` in a scrap of module.
-- Assembly order: keys lie on the table and the modules are lowered over
-  them, then the cams go in. To lift one module out of a locked set, lift its
-  cams and the neighbours' cams on its sides first.
+- Assembly order: lay the modules face down, butted together; drop a key
+  into each seam and a cam into each bore over its head, coin slot up; turn
+  each cam a quarter turn; turn the map over. To take one module out of a
+  locked set, turn the map over and turn back its cams and the neighbours'
+  cams on its sides first.
+- The terrain is grown, not drawn, so a seed can still come out lumpy:
+  rounded moraine hummocks on a plain are real, but the model makes them a
+  little too regular, and a crest the ice planed near its snowline stays a
+  flat summit plateau rather than towers. Cirques placed round a summit are
+  the way to get a horn where you want one.
+- A grow of the example takes about 75 s, most of it the ice. The ice's
+  cost grows about seven-fold each time its grid is halved, which is why
+  towers and gullies come from a fine pass after it instead.
+
+## Answered 7 November 2026
+
+The owner saw the first modules and asked for real U valleys, spires and
+cirques they can place, for the cams to go in from the underside, and for a
+ridge that runs to a side to meet it as a cliff. All built:
+
+- **Rivers before the ice** (`lib/fluvial.js`), **jointed rock**
+  (`lib/rock.js`), a **fine pass for towers and gullies**
+  (`lib/detail.js`), **vertical exaggeration**, **cirques** you place and
+  a lower snowline on the **shaded side**. See "How the ground is grown" in
+  the README.
+- **A bug fixed:** the step that slumps moraine to 33 degrees ran over the
+  whole bed, so no glaciated module had a steeper slope than that.
+- **The cams go in from the underside.** Lay the modules face down, drop
+  the keys and cams in, turn, turn the map over. Nothing is cut into the
+  top. The key's pad is now as thick as its pocket is deep, so it cannot
+  drop out of line once the map is the right way up.
+- **A ridge meets a side as a cliff** by default (`contract.autoCliff`);
+  low ground still slopes up to the rim. A side given its own blend keeps
+  it.
+- **Springs are placed by hand** in the example, once the module has grown.
+
+Asked at the same time, next: springs as a buried chamber under a screened
+cap, as relief makes them, or a tube straight into a lake; and a channel
+that only cuts a gorge where it crosses a ridge, running down the surface of
+a face otherwise.

@@ -54,11 +54,12 @@ export function reportHTML(r, elapsedMS) {
   if (k.placed || k.refused.length) {
     const cams = k.cams || [];
     out.push(`<h3>Cam lock</h3><p class="line">${cams.length} cam housing${cams.length === 1 ? '' : 's'} and ${k.usable} key pocket${k.usable === 1 ? '' : 's'}, `
-      + `one of each a side, ${k.joint.offsetMM} mm either side of the port; ${k.sockets} corner socket${k.sockets === 1 ? '' : 's'} for a spacer plate's studs. `
+      + `one of each a side, ${k.joint.offsetMM} mm either side of the port; ${k.sockets} corner socket${k.sockets === 1 ? '' : 's'} for a spacer plate's pins. `
       + `<b>Print ${k.usable} key${k.usable === 1 ? '' : 's'} and ${cams.length} cam${cams.length === 1 ? '' : 's'}</b>`
-      + `${k.camHeights.length ? ` (${k.camHeights.map((h) => `${fmt(h, 0)} mm`).join(', ')} tall, the height of their rims)` : ''}. `
-      + `Lay the keys on the table, lower the modules over them, drop each cam in slot-to-seam and turn it a quarter turn with a coin: `
-      + `it draws ${fmt(k.joint.drawMM, 1)} mm and pulls the faces together.</p>`);
+      + `${k.camHeights.length ? ` (${k.camHeights.map((h) => `${fmt(h, 1)} mm`).join(', ')} tall)` : ''}. `
+      + 'Everything is in the underside, so nothing shows on top. Lay the modules face down, butted together; drop a key into each seam, '
+      + 'pad into the pocket and head into the next module\'s cam bore; drop a cam into each bore over the head, coin slot up, '
+      + `and turn it a quarter turn with a coin: it draws ${fmt(k.joint.drawMM, 1)} mm and pulls the faces together. Then turn the map over.</p>`);
     if (k.refused.length) out.push(msgList(k.refused.map((x) => `${x.id} left out: ${x.why}`), 'note'));
   }
 

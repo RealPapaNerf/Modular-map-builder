@@ -103,4 +103,13 @@ test('a sheet of cams is a closed solid laid out along x', () => {
 
 test('a cam shorter than its hook and slot is refused', () => {
   assert.throws(() => camSolid(lock, 6), /too short/);
+  assert.throws(() => camSolid(lock, 8), /at least 8\.1 mm/);
+});
+
+test('the cam a module takes, 8.4 mm for its blind bore, is closed and the right height', () => {
+  const s = camSolid(lock, 8.4);
+  const w = checkWatertight(s);
+  assert.ok(w.watertight, `${w.unpaired} unpaired, ${w.overused} overused`);
+  assert.ok(Math.abs(boundingBox(s).size[2] - 8.4) < 1e-6);
+  assert.ok(checkWatertight(camSheet(lock, [8.4, 8.4, 8.4, 8.4])).watertight, 'and a sheet of four');
 });

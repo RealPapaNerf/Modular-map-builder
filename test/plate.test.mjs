@@ -68,7 +68,10 @@ test('the tube holes are on the grid and keep clear of the sockets and the cam b
   const socketR = l.socketMM / 2 + l.clearanceMM;
   const cams = p.bores.filter((b) => !b.hole);
   assert.equal(cams.length, 4, 'one cam bore a side');
-  for (const cam of cams) assert.ok(Math.abs(cam.rMM - boreRadius(l)) < 1e-9);
+  for (const cam of cams) {
+    assert.ok(Math.abs(cam.rMM - boreRadius(l)) < 1e-9);
+    assert.equal(cam.blindMM, l.camHeightMM, 'blind from below, as in a module');
+  }
   for (const h of p.holes) {
     const odd = (v) => Math.abs(v / 10 - Math.round(v / 10)) < 1e-9 && Math.round(v / 10) % 2 === 1;
     assert.ok(odd(h.x) && odd(h.y), `hole at ${h.x},${h.y} is off the grid`);
@@ -126,6 +129,20 @@ test('plates of different heights have their holes and sockets in the same place
   // A hole is a hole through the skin whatever the height.
   const t = meshTile(a.top, { floor: a.floor, bores: a.bores });
   assert.ok(checkWatertight(t).watertight);
+});
+
+test('the 10 mm plate has every lock feature: its bores leave exactly the plastic a module keeps over them', () => {
+  const H = PLATE_HEIGHTS[0];
+  const p = plateFields(c, {}, { heightMM: H });
+  assert.ok(Math.abs(H - l.camHeightMM - l.minFloorMM) < 1e-9, 'the case on the boundary');
+  assert.equal(p.locks.placed.length, 8);
+  assert.deepEqual(p.locks.refused, []);
+  // The pockets are cut into the lock blocks to the bores' depth, and never
+  // into the hollow, where the floor is the skin's underside.
+  let pocket = 0;
+  for (const v of p.floor) if (v === l.camHeightMM) pocket++;
+  assert.ok(pocket > 0);
+  for (const v of p.floor) assert.ok(v <= H - l.minFloorMM + 1e-9, `a ${v} mm floor in a ${H} mm plate`);
 });
 
 test('a plate under 10 mm is refused', () => {

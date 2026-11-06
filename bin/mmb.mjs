@@ -151,6 +151,9 @@ if (cmd === 'canopy') {
     console.log(`\nCam lock: ${cams.length} cam housing(s) and ${usableKeys(r).length} key pocket(s), ${t.sockets.length} corner socket(s); ${t.keysRefused.length + t.socketsRefused.length} left out.`);
     console.log(`  An ${r.joint.camMM} mm cam, a quarter turn with a coin, draws the key's head ${r.joint.drawMM} mm and the faces together. ` +
                 `Print one key per pocket and one cam per housing, ${t.camHeights.join(', ')} mm tall.`);
+    console.log('  It all goes in from the underside: lay the modules face down, butted together, drop a key into each seam (pad in the ' +
+                'pocket, head in the next module\'s bore), drop a cam into each bore over the head, coin slot up, turn it a quarter turn, ' +
+                'and turn the map over. Nothing shows on top.');
     for (const k of [...t.keysRefused, ...t.socketsRefused]) console.log(`  ${k.id} left out: ${k.why}`);
   }
   for (const sp of t.springs) {
@@ -201,7 +204,8 @@ if (cmd === 'canopy') {
     const camHeights = t.keys.filter((k) => k.kind === 'cam').map((k) => k.heightMM);
     if (camHeights.length) {
       writeFileSync(join(dir, 'cams.stl'), writeSTL(camSheet(camSettings(r.joint), camHeights), 'lock cams'));
-      written.push('cams.stl');
+      writeFileSync(join(dir, 'cam-one.stl'), writeSTL(camSolid(camSettings(r.joint), camHeights[0]), 'lock cam'));
+      written.push('cams.stl', 'cam-one.stl');
     }
     const plates = flag('plates');
     if (plates && plates !== true) {

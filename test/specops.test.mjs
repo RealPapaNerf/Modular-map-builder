@@ -8,18 +8,21 @@ import { EXAMPLE_SPEC } from '../lib/example.js';
 // types the numbers that are numbers.
 function drawTheExample() {
   const s = ops.blankSpec();
-  Object.assign(s, { name: 'hanging-valley', seed: 7, meshMM: 0.9, metresPerMM: 25, marginMM: 100, spineHeightMM: 60 });
+  Object.assign(s, { name: 'hanging-valley', seed: 7, meshMM: 0.9, metresPerMM: 25, marginMM: 60, verticalExaggeration: 2, spineHeightMM: 60 });
   ops.setSpine(s, [{ x: -100, y: 112 }, { x: 30, y: 98 }, { x: 105, y: 104 }, { x: 190, y: 94 }, { x: 300, y: 86 }]);
   s.spineWidthMM = 95;
-  ops.setPath(s, 'glacier.cycles', 30);
+  ops.setPath(s, 'glacier.cycles', 24);
   ops.setPath(s, 'glacier.elaSwingMM', 18);
+  ops.addCirque(s, { x: 78, y: 122 }, 100);
+  ops.addCirque(s, { x: 132, y: 120 }, 70);
+  ops.addCirque(s, { x: 104, y: 84 }, 270);
   s.channels = [{ name: 'main', widthMM: 30, depthMM: 10, from: [100, 62], to: 'S' }];
   const conifer = ops.addWoodLayer(s, 'conifer');
   Object.assign(s.canopy[conifer], { crownMM: 7, heightMM: 9, density: 0.4, minZMM: 28, maxZMM: 54, thinningMM: 10, maxSlopeDeg: 36 });
   const broad = ops.addWoodLayer(s, 'deciduous');
   Object.assign(s.canopy[broad], { crownMM: 12, heightMM: 7, density: 0.3, maxZMM: 32, thinningMM: 6, maxSlopeDeg: 24 });
   for (const [k, v] of Object.entries({ fillHollows: true, depthMM: 5, shoreMM: 10, profile: 'dish' })) ops.setPath(s, `lakes.${k}`, v);
-  ops.setPath(s, 'fountains.auto', true);
+  ops.setPath(s, 'fountains.auto', false);
   ops.setPath(s, 'fountains.tubeOdMM', 12.7);
   ops.setPath(s, 'fountains.poolRadiusMM', 16);
   ops.setPath(s, 'contract', { tileMM: 200, edgeLandMM: 22, portWidthMM: 30, channelDepthMM: 10 });
@@ -154,6 +157,7 @@ test('a point spring on a module with no fountains turns on that one only', () =
   ops.addSpringPoint(s, [80, 120]);
   assert.deepEqual(s.fountains, { auto: false, place: [{ atMM: [80, 120] }] });
   const t = structuredClone(EXAMPLE_SPEC);
+  t.fountains.auto = true;
   ops.addSpringPoint(t, [80, 120]);
   assert.equal(t.fountains.auto, true, 'and leaves auto alone where it was on');
 });

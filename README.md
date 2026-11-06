@@ -121,7 +121,7 @@ the report says by how much.
 ### The margin
 
 The ground is grown on a world that is the module plus a margin on every
-side (`marginMM`, half a module by default), and the module is cut from the
+side (`marginMM`, 60 mm by default, 30% of a module), and the module is cut from the
 middle of it. A glacier pinned to zero thickness at the edge of its domain
 cannot flow into a module from outside, and a mountain that stops dead at
 the rim has no catchment. The margin is thrown away; it exists so the ice
@@ -185,18 +185,73 @@ at the rim a channel is the port's width whatever it is inland. A channel may
 come in and go out by any two sides, and take any line between. Two channels
 cannot leave by one side; there is one port a side.
 
-## The glaciers carve, and then they go
+## How the ground is grown
 
-The terrain is still made the same way, because the shapes that make
-glaciated country recognisable — the U section, the overdeepened floor, the
-cirque biting into the divide, the tributary left hanging — are the
-signature of a process and no noise function fakes them. Ice is a shallow,
-isothermal, Glen-law fluid; erosion follows the sliding; the snowline swings
-so that the ice advances and retreats; what it quarries it carries and puts
-down as moraine. All of that is in `lib/glacier.js`, with the defects it
-shipped with and how each was caught, and it is unchanged.
+The shapes that make mountain country recognisable — the U trough, the
+cirque biting into the divide, the arête, the horn, the tower — are the
+signature of processes, and no noise function fakes them. So the ground is
+grown, in this order:
 
-What is new is the end of the run. The cosine schedule ends warm, but warm
+1. **Uplift.** The ridge you draw, volcanoes, flats, and a hollow wherever
+   you put a **cirque** (`lib/terrain.js`).
+2. **Rivers.** Running water cuts branching valleys into the range before
+   any ice arrives (`lib/fluvial.js`, the stream-power law). A glacier does
+   not invent its valleys; it takes over the ones rivers cut. Started on a
+   smooth bump instead, the ice only combed parallel grooves down the flanks,
+   which is why the first version's mountains came out as rounded loaves.
+3. **Ice.** Shallow-ice flow with sliding, abrasion, quarrying, moraines and
+   a snowline that swings so the ice advances and retreats
+   (`lib/glacier.js`). It widens the river valleys into U troughs and
+   gathers first in the cirques, which bite back into the ridge. The
+   snowline sits lower on slopes facing the shade (north by default) and
+   lower again in a cirque, so cirques crowd onto the shaded side as they
+   do in real ranges. By default the coldest snowline stands 45% of the way
+   from the plain up to the peaks, which gives valley glaciers rather than
+   an ice cap whatever the ground looks like.
+4. **Frost and towers.** A fine pass at 1 mm of print a cell, over the module
+   only (`lib/detail.js`). The rock is **jointed** (`lib/rock.js`): two sets
+   of near-vertical cracks a few hundred metres apart, the way Fitz Roy's
+   or the Tetons' granite is. Frost attacks exposed tops and steep faces,
+   fastest along the joints; sound rock stands at up to 82 degrees and a
+   joint at 40; low ground is under soil at 34. What is left between the
+   joints stands as towers, and the gullies run down the weak lines.
+
+Two things the old version got wrong, fixed:
+
+- The step that slumps loose moraine to 33 degrees ran over the whole bed,
+  rock included, so no glaciated module ever had a slope steeper than that.
+  It now moves only ground the ice built up.
+- Soil creep ran everywhere at a rate that spread the ground over about
+  200 m, eight millimetres of print. It is now fast on gentle ground, where
+  it fills quarrying pits and rounds moraines, and slow on steep rock.
+
+**Vertical exaggeration** (`verticalExaggeration`, 2 in the example). A real
+range seen from above is flat: the Grand Teton stands 2100 m over Jackson
+Hole, 42 mm on a 10 km module. Real mountains look sheer because they are
+seen from below, and a model on a table is seen from above. So the print can
+stand taller than the ground it is grown from. Heights you type stay the
+heights printed; the rivers and the ice see ground that much lower in real
+metres, and cut proportionally deeper.
+
+| Peak | Fits in | Scale | Printed at 1× | At 2.5× |
+|---|---|---|---|---|
+| Matterhorn | 6 km | 30 m/mm | ~45 mm | ~110 mm |
+| Fitz Roy group | 10 km | 50 m/mm | ~44 mm | ~110 mm |
+| Grand Teton | 10 km | 50 m/mm | ~42 mm | ~105 mm |
+| Timpanogos | 12 km | 60 m/mm | ~37 mm | ~92 mm |
+
+**Cirques where you want them.** The Cirque tool in Draw: press where a
+glacier bowl should be and drag the way it opens, downhill. A hollow is cut
+there before the rivers, and the snowline is lowered there, so the ice
+gathers in it first and bites its headwall back into the ridge. Three or
+four round one summit carve a horn, the way the Matterhorn was.
+
+A full grow of the example takes about 75 s: the ice is most of it, on a
+112-cell grid over the module and a 60 mm margin; the fine pass about 11 s.
+
+### The ice melts out at the end
+
+The end of the run. The cosine schedule ends warm, but warm
 is not gone: the last advance's remnants were still sitting in the cirques
 when the run stopped, and on the finished map the summits were painted white
 over ground the ice had smoothed, which read as the ice still being there.
@@ -246,24 +301,32 @@ the port, 50 mm out, every side has a cam housing and a key pocket. Walking
 round a shared seam the two modules run opposite ways, so one module's cam
 always meets the other's key, whichever two modules they are.
 
+Everything is in the **underside**. Nothing shows on the top: no bore, no
+coin slot, and no flattened ground round a cam.
+
 - **The key** is flat and 4 mm thick. A pad sits in a pocket in one
   module's underside, a neck runs out through its face, and a round head
   sticks out into the other module.
-- **The cam** is an 18 mm cylinder in a bore through the other module, as
-  tall as that side's rim. Its bottom is hollowed into a spiral. A quarter
-  turn with a coin draws the key's head 1.5 mm toward its axis, with a 10°
-  dwell at the end so it holds. That pulls the pad onto the shoulder of its
-  pocket and the faces together, with 0.2 mm of preload.
-- **Assembly.** Every pocket and entry channel is open at the bottom, so
-  modules are lowered over keys lying on the table, from any side at once.
-  Then the cams drop in from the top, slot pointing at the seam, and turn.
-  The ground round each cam is a small terrace at the rim's height, so the
-  cam sits flush. To take one module out, lift its cams and the neighbours'
-  cams on its sides.
+- **The cam** is an 18 mm cylinder, 8.4 mm tall, in a blind bore 8.4 mm up
+  into the other module's underside. One end is hollowed into a spiral. A
+  quarter turn with a coin draws the key's head 1.5 mm toward its axis,
+  with a 10° dwell at the end so it holds. That pulls the pad onto the
+  shoulder of its pocket and the faces together, with 0.2 mm of preload.
+  Every cam is the same height, whatever the ground over it.
+- **Assembly.** Lay the modules face down on the table, butted together.
+  Drop a key into each seam: the pad falls into one module's pocket, the
+  neck and head into the next module's entry channel and bore. Drop a cam
+  into each bore over the head, hook end first, coin slot up. Turn each a
+  quarter turn with a coin. Then turn the map over and play on it. To take
+  one module out, turn the map over, turn back its cams and the
+  neighbours' cams on its sides, and lift the keys out.
 
 Print one key per pocket and one cam per housing; the editor and `mmb build`
-write `keys.stl` and `cams.stl`. A feature that would cut too thin, or into
-a tube bore, is left out whole and reported.
+write `keys.stl`, `key-one.stl`, `cams.stl` and `cam-one.stl`. The pockets,
+the entry channels and the bores are all 8.4 mm deep and keep 1.6 mm of
+plastic over them, so the ground over a lock has to stand at least 10 mm.
+A feature where it does not, or that would run into a tube bore, is left
+out whole and reported.
 
 ## Spacer plates
 
@@ -282,8 +345,10 @@ node bin/mmb.mjs build module.json --out out/ --plates 10,20
 - **Holes for fountain tubing** through the skin, 16 mm on a 20 mm grid, so a
   12.7 mm tube anywhere on that grid goes straight down the stack. 72 of the
   100 grid positions have one; the rest are too near a lock or a socket.
-- **The same cam lock** on its sides as a module, so a plate locks to
-  whatever stands beside it at its level.
+- **The same cam lock** on its sides as a module, cut up into its solid
+  blocks from below, so a plate locks to whatever stands beside it at its
+  level, assembled face down with the modules. In the 10 mm plate the bores
+  leave exactly the 1.6 mm a module keeps over them.
 - **Stacking.** A socket in each corner of both faces, in the same four
   places a module's underside has them, and a loose pin (`pins.stl`) for
   each. Nothing stands proud of either face.
@@ -336,10 +401,11 @@ south-west corner. A point may be outside 0..200: that is the margin.
 
 ```json
 {
-  "name": "hanging-valley", "seed": 7, "meshMM": 0.9, "metresPerMM": 25, "marginMM": 100,
+  "name": "hanging-valley", "seed": 7, "meshMM": 0.9, "metresPerMM": 25, "marginMM": 60, "verticalExaggeration": 2,
   "spineHeightMM": 60, "spineWidthMM": 95,
   "spine": [[-100, 112], [30, 98], [105, 104], [190, 94], [300, 86]],
-  "glacier": { "cycles": 30, "elaSwingMM": 18 },
+  "glacier": { "cycles": 24, "elaSwingMM": 18 },
+  "cirques": [{ "at": [78, 122], "facingDeg": 100 }],
   "channels": [{ "name": "main", "widthMM": 30, "depthMM": 10, "from": [100, 62], "to": "S" }],
   "canopy": [{ "kind": "conifer", "crownMM": 7, "heightMM": 9, "density": 0.4, "minZMM": 28, "maxZMM": 54 }],
   "lakes": { "fillHollows": true, "depthMM": 5, "shoreMM": 10, "profile": "dish",
@@ -363,8 +429,11 @@ lib/contract.js    the edge contract: the classes, the port, the ) cross-section
 lib/channel.js     channels: snapping to ports, routing down the valley, the floor, the carve
 lib/tile.js        metres to millimetres: cut from the world, leaned onto the rim, squeezed
 lib/build.js       buildWorld (uplift, ice, gravity) and buildTile (the module)
-lib/terrain.js     uplift: spine, roughness, flats, volcanoes
-lib/glacier.js     shallow-ice flow with sliding, till, and the melt-out at the end
+lib/terrain.js     uplift: spine, roughness, flats, volcanoes, cirque hollows
+lib/fluvial.js     rivers: stream-power incision, before the ice
+lib/glacier.js     shallow-ice flow with sliding, till, the shaded side, and the melt-out
+lib/rock.js        jointed rock: how weak it is, and how steep it may stand
+lib/detail.js      the fine pass after the ice: frost, towers, gullies
 lib/hillslope.js   critical-angle failure, and creep
 lib/basins.js      closed hollows, by priority-flood
 lib/lake.js        tarns, lakes placed and painted

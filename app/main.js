@@ -99,6 +99,7 @@ function validateSelection() {
       case 'spine': return Array.isArray(sp.spine);
       case 'volcano': return !!sp.volcanoes?.[s.index];
       case 'flat': return !!sp.flats?.[s.index];
+      case 'cirque': return !!sp.cirques?.[s.index];
       case 'lake': return !!sp.lakes?.place?.[s.index];
       case 'springpoint': return !!sp.fountains?.place?.[s.index];
       case 'wood': return !!sp.canopy?.[s.index];
@@ -401,6 +402,7 @@ function handles3d() {
   (s.spine || []).forEach((p, i) => { if (on(p)) out.push({ key: `spine:${i}`, kind: 'spine', index: i, x: p[0], y: p[1] }); });
   (s.volcanoes || []).forEach((v, i) => { if (on(v.at)) out.push({ key: `volcano:${i}`, kind: 'volcano', index: i, x: v.at[0], y: v.at[1] }); });
   (s.flats || []).forEach((f, i) => { if (on(f.at)) out.push({ key: `flat:${i}`, kind: 'flat', index: i, x: f.at[0], y: f.at[1] }); });
+  (s.cirques || []).forEach((cq, i) => { if (on(cq.at)) out.push({ key: `cirque:${i}`, kind: 'cirque', index: i, x: cq.at[0], y: cq.at[1] }); });
   (s.channels || []).forEach((ch, i) => (ch.path || []).forEach((p, vi) => out.push({ key: `channel:${i}:${vi}`, kind: 'channel-vertex', index: i, vertex: vi, x: p[0], y: p[1] })));
   (s.lakes?.place || []).forEach((spot, i) => { if (on(spot.atMM)) out.push({ key: `lake:${i}`, kind: 'lake', index: i, x: spot.atMM[0], y: spot.atMM[1] }); });
   (s.fountains?.place || []).forEach((spot, i) => { if (on(spot.atMM)) out.push({ key: `springpoint:${i}`, kind: 'springpoint', index: i, x: spot.atMM[0], y: spot.atMM[1] }); });
@@ -479,7 +481,7 @@ function place3d(hit) {
   select({ type: 'springpoint', index });
 }
 
-const HANDLE_NAMES = { spine: 'ridge point', volcano: 'volcano', flat: 'flat', lake: 'lake', springpoint: 'spring', 'channel-vertex': 'channel point' };
+const HANDLE_NAMES = { spine: 'ridge point', volcano: 'volcano', flat: 'flat', cirque: 'cirque', lake: 'lake', springpoint: 'spring', 'channel-vertex': 'channel point' };
 function handle3d(hd, at, phase) {
   if (phase === 'click') { select(hd.kind === 'spine' ? { type: 'spine' } : hd.kind === 'channel-vertex' ? { type: 'channel', index: hd.index } : { type: hd.kind, index: hd.index }); return; }
   if (phase === 'cancel') { cancelLive(); maybeRegrow(); return; }
@@ -997,6 +999,7 @@ function deleteSelection() {
     case 'channel': commit((x) => ops.removeChannel(x, s.index), 'delete a channel'); break;
     case 'spine': commit((x) => { delete x.spine; }, 'delete the ridge'); break;
     case 'volcano': commit((x) => { x.volcanoes.splice(s.index, 1); ops.tidy(x); }, 'delete a volcano'); break;
+    case 'cirque': commit((x) => { x.cirques.splice(s.index, 1); ops.tidy(x); }, 'delete a cirque'); break;
     case 'flat': commit((x) => { x.flats.splice(s.index, 1); ops.tidy(x); }, 'delete a flat'); break;
     case 'lake': commit((x) => { x.lakes.place.splice(s.index, 1); ops.tidy(x); }, 'delete a lake'); break;
     case 'springpoint': commit((x) => { x.fountains.place.splice(s.index, 1); ops.tidy(x); }, 'delete a spring'); break;

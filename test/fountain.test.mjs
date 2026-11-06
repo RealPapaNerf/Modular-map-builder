@@ -62,6 +62,83 @@ test('the bore is round, not a staircase', () => {
   assert.ok(onWall > 100, `expected a ring of vertices exactly on the circle, found ${onWall}`);
 });
 
+/** Signed volume of a closed mesh: positive when its normals point out. */
+const volume = (tris) => {
+  let v = 0;
+  for (let o = 0; o < tris.length; o += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = tris.subarray(o, o + 9);
+    v += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+  }
+  return v / 6;
+};
+
+/** The heights at which a vertical line through (x, y) crosses the surface. */
+const crossings = (tris, x, y) => {
+  const out = [];
+  for (let o = 0; o < tris.length; o += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = tris.subarray(o, o + 9);
+    const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+    if (Math.abs(d) < 1e-12) continue; // a wall, edge on
+    const l1 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d;
+    const l2 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d;
+    const l3 = 1 - l1 - l2;
+    if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+    out.push(l1 * az + l2 * bz + l3 * cz);
+  }
+  return out.sort((p, q) => p - q);
+};
+
+test('a blind bore is a closed hole up from the underside to its depth, and leaves the top whole', () => {
+  const f = makeField(81, 81, 1);
+  f.values.fill(20);
+  const bore = { x: 40.3, y: 39.6, rMM: 8, blindMM: 6 };
+  const tris = meshTile(f, { bores: [bore] });
+  const w = checkWatertight(tris);
+  assert.ok(w.watertight, `${w.unpaired} unpaired, ${w.overused} overused`);
+  // The top is all there: its triangles cover the whole module.
+  let top = 0;
+  for (let o = 0; o < tris.length; o += 9) {
+    if (tris[o + 2] !== 20 || tris[o + 5] !== 20 || tris[o + 8] !== 20) continue;
+    top += Math.abs((tris[o + 3] - tris[o]) * (tris[o + 7] - tris[o + 1]) - (tris[o + 4] - tris[o + 1]) * (tris[o + 6] - tris[o])) / 2;
+  }
+  assert.ok(Math.abs(top - 80 * 80) < 1e-6, `top covers ${top} mm²`);
+  // Inside the circle, a line up through the module meets the roof of the
+  // hole and then the top: empty from 0 to 6, solid from 6 to 20.
+  for (const [x, y] of [[40.31, 39.62], [45.1, 41.3], [36.27, 35.41]]) assert.deepEqual(crossings(tris, x, y).map((v) => +v.toFixed(6)), [6, 20], `at ${x},${y}`);
+  // Outside it, solid all the way.
+  for (const [x, y] of [[10.2, 10.3], [40.3, 49.2], [52.33, 40.71]]) assert.deepEqual(crossings(tris, x, y).map((v) => +v.toFixed(6)), [0, 20], `at ${x},${y}`);
+  // And the volume taken out is the polygon of the circle, 6 mm tall.
+  const n = 48;
+  const disc = (n / 2) * bore.rMM * bore.rMM * Math.sin((2 * Math.PI) / n);
+  const want = 80 * 80 * 20 - disc * bore.blindMM;
+  assert.ok(Math.abs(volume(tris) - want) < 0.05, `volume ${volume(tris).toFixed(3)}, wanted ${want.toFixed(3)}`);
+});
+
+test('a blind bore stays closed where a channel cut into the underside runs into it', () => {
+  // The cam's entry channel: cut up into the floor field to the bore's own
+  // depth, from the side of the module to the bore's axis. Where it meets
+  // the circle the shaft has no height at all.
+  for (const step of [1, 0.9, 2.5]) {
+    const n = Math.round(80 / step) + 1;
+    const f = makeField(n, n, 80 / (n - 1));
+    f.values.fill(20);
+    const floor = new Float64Array(n * n);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      if (Math.abs(j * f.step - 40) <= 4.5 && i * f.step >= 40) floor[j * n + i] = 6;
+    }
+    const tris = meshTile(f, { floor, bores: [{ x: 40, y: 40, rMM: 9.3, blindMM: 6 }, { x: 15, y: 68, rMM: 6.75 }] }); // their blocks clear at every step
+    const w = checkWatertight(tris);
+    assert.ok(w.watertight, `step ${step}: ${w.unpaired} unpaired, ${w.overused} overused`);
+    assert.ok(volume(tris) > 0, 'facing out');
+    // No triangle is folded over: on the shaft, nothing goes below its floor.
+    for (let o = 0; o < tris.length; o += 9) {
+      for (let a = 2; a < 9; a += 3) assert.ok(tris[o + a] >= 0 && tris[o + a] <= 20);
+    }
+    // Under the channel, beside the bore, a line up meets the channel's roof.
+    assert.deepEqual(crossings(tris, 70.13, 40.2).map((v) => +v.toFixed(6)), [6, 20]);
+  }
+});
+
 test('a spring is a pool with a lip and one notch in it', () => {
   const f = slope();
   const s = carveSpring(f, { atMM: [100, 100], spillToward: 0 });

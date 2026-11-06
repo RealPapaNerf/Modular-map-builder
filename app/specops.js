@@ -28,7 +28,7 @@ const r1 = (v) => Math.round(v * 10) / 10;
 
 /** Delete keys whose value is undefined, null, or an empty object or array. */
 export function tidy(spec) {
-  for (const k of ['volcanoes', 'flats', 'channels', 'canopy', 'edits']) {
+  for (const k of ['volcanoes', 'flats', 'cirques', 'channels', 'canopy', 'edits']) {
     if (Array.isArray(spec[k]) && !spec[k].length) delete spec[k];
   }
   if (Array.isArray(spec.spine) && spec.spine.length < 2) delete spec.spine;
@@ -296,6 +296,16 @@ export function describeEdit(e) {
  * volcano or a flat anywhere (the margin included); a channel's vertex, a
  * lake, a spring or a wood's vertex on the module, a hair in from its rim.
  */
+/**
+ * A cirque where somebody wants one: the bowl's middle, and the way it opens
+ * -- downhill, the way its glacier will flow out. See addCirqueSeed.
+ */
+export function addCirque(spec, at, facingDeg, o = {}) {
+  spec.cirques = spec.cirques || [];
+  spec.cirques.push({ at: [r1(at.x), r1(at.y)], facingDeg: Math.round(((facingDeg % 360) + 360) % 360), ...(o.radiusMM ? { radiusMM: Math.round(o.radiusMM) } : {}) });
+  return spec.cirques.length - 1;
+}
+
 export function moveFeature(spec, kind, index, { x, y }, vertex = null) {
   const { T } = dims(spec);
   const clamp = (v) => r1(Math.max(0, Math.min(T, v)));
@@ -304,6 +314,7 @@ export function moveFeature(spec, kind, index, { x, y }, vertex = null) {
     case 'spine': if (Array.isArray(spec.spine) && spec.spine[index]) spec.spine[index] = free; break;
     case 'volcano': if (spec.volcanoes?.[index]) spec.volcanoes[index].at = free; break;
     case 'flat': if (spec.flats?.[index]) spec.flats[index].at = free; break;
+    case 'cirque': if (spec.cirques?.[index]) spec.cirques[index].at = free; break;
     case 'channel-vertex': {
       const ch = spec.channels?.[index];
       if (ch && Array.isArray(ch.path) && ch.path[vertex]) ch.path[vertex] = [clamp(x), clamp(y)];
@@ -340,7 +351,7 @@ export function shiftFeature(spec, kind, index, dx, dy) {
 
 /** The order the example writes its keys in, so the JSON reads the same however it was drawn. */
 export const KEY_ORDER = ['name', 'seed', 'meshMM', 'metresPerMM', 'marginMM', 'worldGrid',
-  'spineHeightMM', 'spineWidthMM', 'baseElevMM', 'roughness', 'spine', 'flats', 'volcanoes', 'glacier', 'reposeDeg', 'reposePasses',
+  'verticalExaggeration', 'spineHeightMM', 'spineWidthMM', 'baseElevMM', 'roughness', 'spine', 'flats', 'volcanoes', 'cirques', 'rivers', 'rock', 'glacier', 'detail', 'reposeDeg', 'reposePasses',
   'channels', 'channelDefaults', 'canopy', 'lakes', 'fountains', 'edits', 'joints', 'locks', 'plates', 'tray', 'contract'];
 
 const ORDERS = {
