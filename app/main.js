@@ -11,7 +11,7 @@
 // opened, so drawing never waits for it.
 
 import { EXAMPLE_SPEC } from '../lib/example.js';
-import { worldKey } from '../lib/build.js';
+import { worldKey, GLACIER_SPEC_DEFAULTS } from '../lib/build.js';
 import { toRGBA } from '../lib/shade.js';
 import { isBoardSpec, BOARD_SPEC_MESSAGE } from '../lib/scale.js';
 import * as ops from './specops.js';
@@ -324,7 +324,7 @@ function estimateSeconds(s, mode) {
   const { T } = ops.dims(s);
   const meshMM = Number(s.meshMM) || 0.8;
   const cells = ((T / meshMM) + 1) ** 2;
-  const cycles = mode === 'check' || s.glacier === false ? 0 : (s.glacier?.cycles ?? 30);
+  const cycles = mode === 'check' || s.glacier === false ? 0 : (s.glacier?.cycles ?? GLACIER_SPEC_DEFAULTS.cycles);
   return (0.2 + cells * 1.2e-5 + cycles * 0.3) * 1.15;
 }
 

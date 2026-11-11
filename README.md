@@ -217,7 +217,10 @@ grown, in this order:
    lower again in a cirque, so cirques crowd onto the shaded side as they
    do in real ranges. By default the coldest snowline stands 45% of the way
    from the plain up to the peaks, which gives valley glaciers rather than
-   an ice cap whatever the ground looks like.
+   an ice cap whatever the ground looks like. A module that says nothing about
+   its ice gets the example's: 24 steps of advance and retreat with the
+   snowline swinging 18 mm of print either side of its mean
+   (`glacier.cycles`, `glacier.elaSwingMM`).
 4. **Frost and towers.** A fine pass at 1 mm of print a cell, over the module
    only (`lib/detail.js`). The rock is **jointed** (`lib/rock.js`): two sets
    of near-vertical cracks a few hundred metres apart, the way Fitz Roy's
@@ -235,7 +238,7 @@ Two things the old version got wrong, fixed:
   200 m, eight millimetres of print. It is now fast on gentle ground, where
   it fills quarrying pits and rounds moraines, and slow on steep rock.
 
-**Vertical exaggeration** (`verticalExaggeration`, 2 in the example). A real
+**Vertical exaggeration** (`verticalExaggeration`, 2 by default). A real
 range seen from above is flat: the Grand Teton stands 2100 m over Jackson
 Hole, 42 mm on a 10 km module. Real mountains look sheer because they are
 seen from below, and a model on a table is seen from above. So the print can
@@ -407,6 +410,16 @@ Four stages over one spec, the spec being the document:
 | **Grow** | runs the generator in a worker, then stands the module up in 3D as it will print, water in its channels and lakes |
 | **Refine** | brushes on the grown ground in 3D: raise, lower, smooth, flatten, paint water, plant, clear, a spring. Every stroke is kept as an edit and the module grows again with it, keeping the ice from last time |
 | **Print** | the report and the files: the module's STL, its keys and cams, the tray, and spacer plates if wanted |
+
+With nothing selected the inspector on the right is the module, and it
+shows the few things a map for play turns on: its name, a seed to roll, how
+tall the mountains are, whether the ice ran over it, whether the hollows
+hold water, the channels drawn on it, and the class of each side. Everything
+else the generator can be told -- the scale and the margin, the rivers and
+the rock's joints, the ice's climate, the lakes' shore, the springs' tubing,
+the woods over the whole module, the contract's numbers -- is under
+**Advanced** at the bottom, all still there and all still written to the
+same spec.
 
 The **Channel** tool is a drag: start or finish on a port mark — the middle
 of a side — to cross the rim there, or anywhere within 30 mm of a side, and

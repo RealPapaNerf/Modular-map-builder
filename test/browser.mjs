@@ -111,6 +111,12 @@ async function field(id, value) {
   }
   await page.waitForTimeout(60);
 }
+/** The module panel keeps the generator's settings under one Advanced disclosure; open it before filling them. */
+async function openAdvanced() {
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const d = page.locator('#inspector details.advanced');
+  if (!(await d.evaluate((e) => e.open))) { await d.locator('summary').click(); await page.waitForTimeout(60); }
+}
 async function nothingSelected() {
   await page.locator('#canvas').focus();
   await page.keyboard.press('Escape');
@@ -144,9 +150,10 @@ await step('the module\'s numbers go in through the inspector', async () => {
   await nothingSelected();
   await field('Name', 'hanging-valley');
   await field('Seed', 7);
+  await field('Mountains', 60);
+  await openAdvanced();
   await field('Margin', 60);
   await field('verticalExaggeration', 2);
-  await field('Mountains', 60);
   await field('Ridge width', 95);
   await field('Cycles', 24);
   await field('Snowline swing', 18);
@@ -233,6 +240,7 @@ await step('a channel drawn with the mouse snaps its ends to the ports and takes
 
 await step('woods, water and springs: the numbers that are numbers', async () => {
   await nothingSelected();
+  await openAdvanced();
   await page.click('#inspector button >> text="+ Conifers"');
   await field('canopy.0.crownMM', 7);
   await field('canopy.0.heightMM', 9);

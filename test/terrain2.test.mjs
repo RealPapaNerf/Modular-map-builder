@@ -116,9 +116,9 @@ test('a cirque seed is a hollow open toward its facing, and says where it is', (
 
 test('vertical exaggeration: the print stands taller than the ground, and what is typed is still what is printed', () => {
   const base = { seed: 2, worldGrid: 48, marginMM: 40, glacier: false, rivers: false, detail: false, spineHeightMM: 40, roughness: 0, spine: [[-40, 100], [240, 100]], lakes: { fillHollows: false } };
-  assert.equal(verticalOf({}), 1);
-  const one = buildWorld(base);
-  const two = buildWorld({ ...base, verticalExaggeration: 2 });
+  assert.equal(verticalOf({}), 2, 'twice as tall by default, as the example is');
+  const one = buildWorld({ ...base, verticalExaggeration: 1 });
+  const two = buildWorld(base);
   const hi = (w) => Math.max(...w.bed.values) - Math.min(...w.bed.values);
   assert.ok(Math.abs(hi(two) / hi(one) - 0.5) < 0.02, 'the ground the ice sees is half as tall');
   const c = makeContract();

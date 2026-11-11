@@ -257,6 +257,9 @@ button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(
 .insp .layer-head { display: flex; align-items: center; gap: 6px; font-size: 0.84rem; font-weight: 600; }
 .insp .layer-head .grow { flex: 1; }
 .insp details summary { cursor: pointer; font-size: 0.8rem; color: var(--dim); margin: 8px 0 4px; }
+.insp details.advanced { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 6px; }
+.insp details.advanced > summary { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 650; }
+.insp details.advanced > summary .hint { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .insp .edit-list { margin: 6px 0; padding-left: 20px; font-size: 0.84rem; }
 .insp .edit-list li { margin: 2px 0; }
 .insp .edit-list li > span { margin-right: 6px; }

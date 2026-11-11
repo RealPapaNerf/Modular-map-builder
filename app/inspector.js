@@ -11,8 +11,8 @@ import { CHANNEL_DEFAULTS } from '../lib/channel.js';
 import { LAKE_DEFAULTS, PROFILES } from '../lib/lake.js';
 import { FOUNTAIN_DEFAULTS } from '../lib/fountain.js';
 import { CANOPY_DEFAULTS } from '../lib/canopy.js';
-import { DEFAULT_M_PER_MM } from '../lib/scale.js';
-import { CIRQUE_DEFAULTS } from '../lib/build.js';
+import { DEFAULT_M_PER_MM, DEFAULT_VERTICAL } from '../lib/scale.js';
+import { CIRQUE_DEFAULTS, GLACIER_SPEC_DEFAULTS } from '../lib/build.js';
 import * as ops from './specops.js';
 
 const SIDE = { N: 'north', E: 'east', S: 'south', W: 'west' };
@@ -118,6 +118,22 @@ export function renderInspector(root, api) {
 
 /* ---------------------------------------------------------------- module */
 
+/**
+ * Whether the Advanced disclosure is open. Kept here, not in the DOM: the
+ * inspector is rebuilt on every change, and a player who opened it should
+ * not have to open it again after each keystroke.
+ */
+let advancedOpen = false;
+
+/**
+ * THE FEW THINGS A PLAYER NEEDS, and one disclosure for the rest. A map for
+ * play is a name, a seed to roll, how tall the mountains are, whether the
+ * ice ran over it, whether the hollows hold water, and what each side mates
+ * with. Everything else here -- scale, margin, the rivers, the rock's
+ * joints, the ice's climate, the lakes' shore, the springs' tubing, the
+ * contract's numbers -- is the generator's business, and it is all still
+ * here under Advanced, where a spec that set it still shows it.
+ */
 function modulePanel(api) {
   const s = api.state.spec;
   const { T } = ops.dims(s);
@@ -132,31 +148,10 @@ function modulePanel(api) {
       h('div', { class: 'field' }, h('span', {}, 'Seed'), h('span', { class: 'ctl' },
         numInput(api, 'Seed', (x) => x.seed, (x, v) => { x.seed = v ?? 1; }, { step: 1, min: 0 }),
         h('button', { type: 'button', class: 'mini', title: 'A different module, same rules', onclick: () => api.commit((x) => { x.seed = Math.floor(Math.random() * 100000); }, 'roll the seed') }, 'Roll'))),
-      num(api, 'Scale', { get: (x) => x.metresPerMM, set: (x, v) => { if (v === undefined) delete x.metresPerMM; else x.metresPerMM = v; }, unit: 'm/mm', step: 1, min: 1, placeholder: String(DEFAULT_M_PER_MM), title: 'Metres of real ground per millimetre of print. The only place metres appear: it is what lets the glacier behave like a glacier.' }),
-      num(api, 'Margin', { get: (x) => x.marginMM, set: (x, v) => { if (v === undefined) delete x.marginMM; else x.marginMM = v; }, unit: 'mm', step: 10, min: 0, placeholder: String(T / 2), title: 'How far the world runs past the rim on every side, so the ice has somewhere to come from. Grown, not printed.' }),
-    ),
-    group('Ground',
       num(api, 'Mountains', { get: (x) => x.spineHeightMM, set: (x, v) => { if (v === undefined) delete x.spineHeightMM; else x.spineHeightMM = v; }, unit: 'mm', step: 1, min: 0, placeholder: '60', title: 'How far the ridge stands above the low ground, on the print' }),
-      num(api, 'Ridge width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.45)) }),
-      num(api, 'Roughness', { get: (x) => x.roughness, set: (x, v) => { if (v === undefined) delete x.roughness; else x.roughness = v; }, step: 0.02, min: 0, max: 1, placeholder: '0.22' }),
-      num(api, 'Taller by', { get: (x) => x.verticalExaggeration, set: (x, v) => { if (v === undefined) delete x.verticalExaggeration; else x.verticalExaggeration = v; }, unit: '×', step: 0.25, min: 1, max: 4, placeholder: '1', id: 'verticalExaggeration',
-        title: 'How much taller the print stands than the ground it is grown from. Heights you type stay the heights printed; the ice and the rivers see ground this much lower, so they cut proportionally deeper. 2 to 3 makes a range read as sheer from above.' }),
-      check(api, 'Rivers cut it first', { get: (x) => x.rivers !== false, set: (x, on) => { if (on) delete x.rivers; else x.rivers = false; }, id: 'rivers',
-        title: 'Running water cuts branching valleys into the range before the ice comes; the ice then widens them into U troughs' }),
-      check(api, 'Towers and gullies', { get: (x) => x.detail !== false, set: (x, on) => { if (on) delete x.detail; else x.detail = false; }, id: 'detail',
-        title: 'A fine pass after the ice: frost opens the joints in the rock, the sound blocks between them stand as towers, and gullies run down the weak lines' }),
-      num(api, 'Joint spacing', { get: (x) => x.rock?.blockM, set: (x, v) => ops.setPath(x, 'rock.blockM', v), unit: 'm', step: 20, min: 100, placeholder: '420', id: 'rock.blockM',
-        title: 'Real metres between the cracks in the rock: about how wide a tower is' }),
-    ),
-    group('Ice',
-      check(api, 'Glaciate', { get: (x) => x.glacier !== false, set: (x, on) => { x.glacier = on ? (x.glacier && typeof x.glacier === 'object' ? x.glacier : { cycles: 30 }) : false; } }),
-      s.glacier !== false ? [
-        num(api, 'Cycles', { get: (x) => x.glacier?.cycles, set: (x, v) => ops.setPath(x, 'glacier.cycles', v), min: 1, max: 200, placeholder: 'default' }),
-        num(api, 'Snowline swing', { get: (x) => x.glacier?.elaSwingMM, set: (x, v) => ops.setPath(x, 'glacier.elaSwingMM', v), unit: 'mm', step: 1, min: 0, placeholder: '18', title: 'How far the snowline moves either side of its mean. This is what leaves a staircase of cirques and a line of recessional moraines instead of one clean trough.' }),
-        num(api, 'Till kept', { get: (x) => x.glacier?.tillYield, set: (x, v) => ops.setPath(x, 'glacier.tillYield', v), step: 0.05, min: 0, max: 1, placeholder: '0.55', title: 'How much of the rock the ice cuts it carries and puts back down as moraines, rather than exporting as rock flour.' }),
-        num(api, 'Advances', { get: (x) => x.glacier?.glacialCycles, set: (x, v) => ops.setPath(x, 'glacier.glacialCycles', v), min: 1, max: 12, placeholder: '3' }),
-        h('p', { class: 'hint' }, 'The ice carves, retreats, and melts out entirely before the module is cut: what is printed is the bed it left.'),
-      ] : null,
+      check(api, 'Glaciate', { get: (x) => x.glacier !== false, set: (x, on) => { if (!on) x.glacier = false; else if (!x.glacier || typeof x.glacier !== 'object') delete x.glacier; },
+        title: 'Ice carves the valleys, leaves cirques and moraines, and melts out before the module is cut' }),
+      check(api, 'Tarns in hollows', { get: (x) => x.lakes?.fillHollows !== false, set: (x, on) => ops.setPath(x, 'lakes.fillHollows', on), title: 'The hollows the ice left fill with water' }),
     ),
     group('Channels',
       s.channels?.length ? h('ul', { class: 'facts' }, s.channels.map((ch, i) => {
@@ -165,11 +160,49 @@ function modulePanel(api) {
           h('span', {}, ch.name || `channel ${i + 1}`),
           h('span', {}, ends ? `${ends.from || '·'} → ${ends.to || '·'}` : 'will not cut'));
       })) : h('p', { class: 'hint' }, 'None yet. Draw one with the Channel tool: start or finish on a port to cross the rim.'),
+    ),
+    group('Sides',
+      h('p', { class: 'hint' }, 'Every side is a class. A side mates flush with any side of its class; water comes in by a higher class than it leaves by.'),
+      EDGES.map((e) => sideClassRow(api, c, e)),
+    ),
+    editsGroup(api),
+    designNotes(api),
+    advanced(api, s, c, T),
+  ];
+}
+
+/** Everything the generator can be told, in one disclosure. The groups read as they always did. */
+function advanced(api, s, c, T) {
+  const d = h('details', { class: 'advanced', open: advancedOpen },
+    h('summary', {}, 'Advanced', h('span', { class: 'hint' }, ' — scale, climate, rock, water, springs, woods, the contract')),
+    group('World',
+      num(api, 'Scale', { get: (x) => x.metresPerMM, set: (x, v) => { if (v === undefined) delete x.metresPerMM; else x.metresPerMM = v; }, unit: 'm/mm', step: 1, min: 1, placeholder: String(DEFAULT_M_PER_MM), title: 'Metres of real ground per millimetre of print. The only place metres appear: it is what lets the glacier behave like a glacier.' }),
+      num(api, 'Margin', { get: (x) => x.marginMM, set: (x, v) => { if (v === undefined) delete x.marginMM; else x.marginMM = v; }, unit: 'mm', step: 10, min: 0, placeholder: String(Math.round(T * 0.3)), title: 'How far the world runs past the rim on every side, so the ice has somewhere to come from. Grown, not printed.' }),
+    ),
+    group('Ground',
+      num(api, 'Ridge width', { get: (x) => x.spineWidthMM, set: (x, v) => { if (v === undefined) delete x.spineWidthMM; else x.spineWidthMM = v; }, unit: 'mm', step: 5, min: 5, placeholder: String(Math.round(T * 0.45)) }),
+      num(api, 'Roughness', { get: (x) => x.roughness, set: (x, v) => { if (v === undefined) delete x.roughness; else x.roughness = v; }, step: 0.02, min: 0, max: 1, placeholder: '0.22' }),
+      num(api, 'Taller by', { get: (x) => x.verticalExaggeration, set: (x, v) => { if (v === undefined) delete x.verticalExaggeration; else x.verticalExaggeration = v; }, unit: '×', step: 0.25, min: 1, max: 4, placeholder: String(DEFAULT_VERTICAL), id: 'verticalExaggeration',
+        title: 'How much taller the print stands than the ground it is grown from. Heights you type stay the heights printed; the ice and the rivers see ground this much lower, so they cut proportionally deeper. 2 to 3 makes a range read as sheer from above.' }),
+      check(api, 'Rivers cut it first', { get: (x) => x.rivers !== false, set: (x, on) => { if (on) delete x.rivers; else x.rivers = false; }, id: 'rivers',
+        title: 'Running water cuts branching valleys into the range before the ice comes; the ice then widens them into U troughs' }),
+      check(api, 'Towers and gullies', { get: (x) => x.detail !== false, set: (x, on) => { if (on) delete x.detail; else x.detail = false; }, id: 'detail',
+        title: 'A fine pass after the ice: frost opens the joints in the rock, the sound blocks between them stand as towers, and gullies run down the weak lines' }),
+      num(api, 'Joint spacing', { get: (x) => x.rock?.blockM, set: (x, v) => ops.setPath(x, 'rock.blockM', v), unit: 'm', step: 20, min: 100, placeholder: '420', id: 'rock.blockM',
+        title: 'Real metres between the cracks in the rock: about how wide a tower is' }),
+    ),
+    s.glacier !== false ? group('Ice',
+      num(api, 'Cycles', { get: (x) => x.glacier?.cycles, set: (x, v) => ops.setPath(x, 'glacier.cycles', v), min: 1, max: 200, placeholder: String(GLACIER_SPEC_DEFAULTS.cycles) }),
+      num(api, 'Snowline swing', { get: (x) => x.glacier?.elaSwingMM, set: (x, v) => ops.setPath(x, 'glacier.elaSwingMM', v), unit: 'mm', step: 1, min: 0, placeholder: String(GLACIER_SPEC_DEFAULTS.elaSwingMM), title: 'How far the snowline moves either side of its mean. This is what leaves a staircase of cirques and a line of recessional moraines instead of one clean trough.' }),
+      num(api, 'Till kept', { get: (x) => x.glacier?.tillYield, set: (x, v) => ops.setPath(x, 'glacier.tillYield', v), step: 0.05, min: 0, max: 1, placeholder: '0.55', title: 'How much of the rock the ice cuts it carries and puts back down as moraines, rather than exporting as rock flour.' }),
+      num(api, 'Advances', { get: (x) => x.glacier?.glacialCycles, set: (x, v) => ops.setPath(x, 'glacier.glacialCycles', v), min: 1, max: 12, placeholder: '3' }),
+      h('p', { class: 'hint' }, 'The ice carves, retreats, and melts out entirely before the module is cut: what is printed is the bed it left.'),
+    ) : null,
+    group('Channels',
       num(api, 'Default width', { get: (x) => x.channelDefaults?.widthMM, set: (x, v) => ops.setPath(x, 'channelDefaults.widthMM', v), unit: 'mm', step: 5, min: 4, placeholder: String(CHANNEL_DEFAULTS.widthMM) }),
       num(api, 'Default depth', { get: (x) => x.channelDefaults?.depthMM, set: (x, v) => ops.setPath(x, 'channelDefaults.depthMM', v), unit: 'mm', step: 1, min: 0.5, placeholder: String(c.channelDepthMM) }),
     ),
     group('Standing water',
-      check(api, 'Tarns in hollows', { get: (x) => x.lakes?.fillHollows !== false, set: (x, on) => ops.setPath(x, 'lakes.fillHollows', on) }),
       num(api, 'Depth', { get: (x) => x.lakes?.depthMM, set: (x, v) => ops.setPath(x, 'lakes.depthMM', v), unit: 'mm', step: 0.5, min: 0.5, placeholder: String(LAKE_DEFAULTS.depthMM) }),
       num(api, 'Shore', { get: (x) => x.lakes?.shoreMM, set: (x, v) => ops.setPath(x, 'lakes.shoreMM', v), unit: 'mm', step: 0.5, min: 0, placeholder: String(LAKE_DEFAULTS.shoreMM) }),
       choose(api, 'Bed', { options: [['', 'default (dish)'], ...PROFILES.map((x) => [x, x])], get: (x) => x.lakes?.profile, set: (x, v) => ops.setPath(x, 'lakes.profile', v) }),
@@ -187,9 +220,9 @@ function modulePanel(api) {
       h('p', { class: 'hint' }, 'A chamber is a room under the ground with a lid whose top is the ground, screened with holes: the jet hits the lid and the water wells out. A spring placed in a lake is the tube straight into it.'),
     ),
     group('Woods over the whole module', woodLayers(api)),
-    group('Sides',
-      h('p', { class: 'hint' }, 'Every side is a class: its rim stands 2 mm more than the class above the base. A side mates flush with any side of its class. A channel crosses a side 10 mm below its rim, so water comes in at 12 to 52 mm and leaves at 2 to 42.'),
-      EDGES.map((e) => sideRow(api, c, e)),
+    group('Sides, in detail',
+      h('p', { class: 'hint' }, 'A class as any multiple of 10 up to 190, and how the ground meets the rim: a cliff, or a slope over the last few centimetres. A channel crosses a side 10 mm below its rim, so water comes in at 12 to 52 mm and leaves at 2 to 42.'),
+      EDGES.map((e) => sideDetailRow(api, c, e)),
     ),
     group('Contract',
       num(api, 'Module', { get: (x) => x.contract?.tileMM, set: (x, v) => setContract(x, 'tileMM', v), unit: 'mm', step: 10, min: 50, placeholder: String(c.tileMM) }),
@@ -198,24 +231,30 @@ function modulePanel(api) {
       num(api, 'Channel depth', { get: (x) => x.contract?.channelDepthMM, set: (x, v) => setContract(x, 'channelDepthMM', v), unit: 'mm', step: 1, min: 1, placeholder: String(c.channelDepthMM), title: 'How deep a channel is below the ground, and how deep the port is.' }),
       h('p', { class: 'hint' }, `A channel crosses a side ${c.portWidthMM} mm wide and ${c.channelDepthMM} mm deep, in the middle of the side, with a ${c.grooveDepthMM} mm groove across its bed at the seam for a bead of silicone.`),
     ),
-    editsGroup(api),
-    designNotes(api),
-  ];
+  );
+  d.addEventListener('toggle', () => { advancedOpen = d.open; });
+  return d;
 }
 
-/** One side: its class, and whether the ground stands up to it as a cliff or slopes down to it. */
-function sideRow(api, c, e) {
+/** One side, as a player sees it: its class as a row of chips, and what that means in millimetres. */
+function sideClassRow(api, c, e) {
   const k = classOf(c, e);
   const classes = EDGE_CLASSES.includes(k) ? EDGE_CLASSES : [...EDGE_CLASSES, k].sort((a, b) => a - b);
   const port = api.state.say?.ports?.[e];
   return h('div', { class: 'side' },
     seg(`${SIDE[e][0].toUpperCase()}${SIDE[e].slice(1)}`, classes.map((v) => [v, String(v)]), k,
       (v) => api.commit((x) => ops.setEdgeClass(x, e, Number(v)), `${SIDE[e]} side class`), { wide: true, id: `side.${e}.class` }),
+    h('p', { class: 'hint' }, `Rim ${edgeLand(c, e)} mm${port ? `; the channel crosses at ${portFloorAt(c, e)} mm` : ''}.`));
+}
+
+/** The same side in Advanced: any class as a number, and how the ground meets the rim. */
+function sideDetailRow(api, c, e) {
+  const k = classOf(c, e);
+  return h('div', { class: 'side' },
     num(api, `${SIDE[e]} class`, { get: () => k, set: (x, v) => ops.setEdgeClass(x, e, v), unit: '', step: 10, min: 10, max: 190, id: `side.${e}.classMM`, title: 'Any multiple of 10 up to 190: a side that is all mountain can stand as high as the print' }),
     seg('Meets it', BLENDS, Number.isFinite(c.blends?.[e]) ? c.blends[e] : null,
       (v) => api.commit((x) => ops.setEdgeBlend(x, e, v === null || v === 'null' ? undefined : Number(v)), `${SIDE[e]} side blend`),
-      { wide: true, id: `side.${e}.blend`, title: 'auto: ground above the rim meets it as a cliff, ground below slopes up to it' }),
-    h('p', { class: 'hint' }, `Rim ${edgeLand(c, e)} mm${port ? `; the channel crosses at ${portFloorAt(c, e)} mm` : ''}.`));
+      { wide: true, id: `side.${e}.blend`, title: 'auto: ground above the rim meets it as a cliff, ground below slopes up to it' }));
 }
 
 /** The contract is written whole once it is touched, so the four numbers read together in the JSON. */
