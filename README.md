@@ -227,7 +227,13 @@ grown, in this order:
    or the Tetons' granite is. Frost attacks exposed tops and steep faces,
    fastest along the joints; sound rock stands at up to 82 degrees and a
    joint at 40; low ground is under soil at 34. What is left between the
-   joints stands as towers, and the gullies run down the weak lines.
+   joints stands as towers, and the gullies run down the weak lines. Frost
+   works above a **snowline**, given as millimetres on the print above the
+   module's lowest ground (`detail.frostFromMM`, 10 mm, coming in fully over
+   `frostBandMM`, 14 mm) -- an absolute height, like every other height in a
+   spec. It used to be a fraction of the module's relief, which pinned it to
+   the tallest thing on the map: a 60 mm ridge put the line at 36 mm and
+   every 32 mm volcano beside it came out of the fine pass untouched.
 
 Two things the old version got wrong, fixed:
 
